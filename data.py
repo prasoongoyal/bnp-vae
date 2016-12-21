@@ -33,7 +33,7 @@ class Data():
     self.batch_start_idx += self.batch_size
     if (self.batch_start_idx > len(self.data)):
       self.batch_start_idx = 0
-      one_epoch_completed = True
+      self.one_epoch_completed = True
     # load images
     batch = []
     batch_annot = []
@@ -47,4 +47,4 @@ class Data():
       batch_annot.append((image_info[1], image_info[2]))
 
     #print (len(result))
-    return batch, batch_annot, one_epoch_completed
+    return batch, batch_annot, self.one_epoch_completed

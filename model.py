@@ -36,7 +36,7 @@ class Model():
     handles = self.buildGraph()
     self.session.run(tf.initialize_all_variables())
     
-    (self.x_in, self.theta_normalized, self.z, self.x_reconstructed, self.cost,
+    (self.x_in, self.ncrp_prior, self.theta_normalized, self.z, self.x_reconstructed, self.cost,
     self.global_step, self.train_op) = handles
 
     '''
@@ -83,7 +83,7 @@ class Model():
     kl_loss = Model.kl_loss(theta_normalized, ncrp_prior)
      
     with tf.name_scope("cost"):
-      cost = tf.reduce_mean(tf.add(rec_loss, kl_loss),1)
+      cost = tf.reduce_mean(rec_loss + kl_loss, name="vae_cost")
 
     # optimization
     global_step = tf.Variable(0, trainable=False)
@@ -94,7 +94,7 @@ class Model():
       train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step,
                   name="minimize_cost")
 
-    return (x_in, theta_normalized, z, x_reconstructed, cost, global_step, train_op)
+    return (x_in, ncrp_prior, theta_normalized, z, x_reconstructed, cost, global_step, train_op)
     
   def train(self, train_data, max_iter=np.inf, max_epochs=np.inf, outdir="./out"):
     saver = tf.train.Saver(tf.all_variables())
@@ -105,9 +105,20 @@ class Model():
 
       print ("------------ Training begin: {} -----------\n".format(now))
 
+      # initialize ncrp prior
+      ncrp_prior = {}
+
       while True:
         x, x_annot, one_epoch_completed = train_data.get_next_batch()
-        feed_dict = {self.x_in: x}
+        ncrp_prior_batch = []
+        for (vidid, frameid) in x_annot:
+          try:
+            ncrp_prior_vid = ncrp_prior[vidid]
+          except:
+            ncrp_prior_vid = np.ones(NUM_PATHS)
+            ncrp_prior_vid = ncrp_prior_vid / np.sum(ncrp_prior_vid)
+          ncrp_prior_batch.append(ncrp_prior_vid)
+        feed_dict = {self.x_in: x, self.ncrp_prior: ncrp_prior_batch}
         fetches = [self.x_reconstructed, self.theta_normalized, self.z, self.cost, self.global_step, self.train_op]
         x_reconstructed, theta_normalized, z, cost, iteration, _ = self.session.run(fetches, feed_dict)
 
@@ -121,6 +132,9 @@ class Model():
           vid_path_assignments[frameid] = int(z[i][0])
           self.path_assignments[vidid] = vid_path_assignments
 
+        if iteration%10 == 0:
+          ncrp_prior = self.recompute_ncrp(self.path_assignments)
+
         #print (self.path_assignments)
         if iteration%100 == 0:
           self.write_z(self.path_assignments, "assignments_"+str(iteration)+".txt")
@@ -132,6 +146,10 @@ class Model():
         now = datetime.now().isoformat()[11:]
         print ("---------- Training end: {} -----------\n".format(now))
         sys.exit(0)
+
+  @staticmethod
+  def recompute_ncrp(path_assignments):
+    
 
   @staticmethod
   def write_z(z, filename):
@@ -148,11 +166,14 @@ class Model():
 
   @staticmethod
   def kl_loss(theta_normalized, ncrp_prior):
+    offset = 1e-7
     with tf.name_scope("kl_loss"):
-      log_theta_normalized = tf.log(theta_normalized, name="log_theta_normalized")
-      log_ncrp_prior = tf.log(ncrp_prior, name="log_ncrp_prior")
+      theta_normalized_ = tf.clip_by_value(theta_normalized, offset, 1-offset)
+      ncrp_prior_ = tf.clip_by_value(ncrp_prior, offset, 1-offset)
+      log_theta_normalized = tf.log(theta_normalized_, name="log_theta_normalized")
+      log_ncrp_prior = tf.log(ncrp_prior_, name="log_ncrp_prior")
       log_diff = tf.subtract(log_ncrp_prior, log_theta_normalized, name="log_diff")
-      return tf.reduce_sum(tf.multiply(theta_normalized, log_diff), 1)
+      return tf.reduce_sum(tf.multiply(theta_normalized_, log_diff), 1)
     
 
   @staticmethod
