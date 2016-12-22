@@ -36,8 +36,9 @@ class Model():
     handles = self.buildGraph()
     self.session.run(tf.initialize_all_variables())
     
-    (self.x_in, self.ncrp_prior, self.theta_normalized, self.z, self.x_reconstructed, self.cost,
-    self.global_step, self.train_op) = handles
+    (self.x_in, self.ncrp_prior, self.theta_normalized, self.z, self.x_reconstructed, 
+        self.rec_cost_mean, self.kl_cost_mean, self.cost, self.global_step, 
+        self.train_op) = handles
 
     '''
     merged_summary_op = tf.merge_all_summaries()
@@ -81,9 +82,15 @@ class Model():
 
     rec_loss = Model.l2_loss(x_reconstructed, x_in)
     kl_loss = Model.kl_loss(theta_normalized, ncrp_prior)
-     
+
+    with tf.name_scope("rec_cost_mean"):
+      rec_cost_mean = tf.reduce_mean(rec_loss)
+
+    with tf.name_scope("kl_cost_mean"):
+      kl_cost_mean = tf.reduce_mean(kl_loss)
+
     with tf.name_scope("cost"):
-      cost = tf.reduce_mean(rec_loss + kl_loss, name="vae_cost")
+      cost = tf.reduce_mean(10 * rec_loss + kl_loss, name="vae_cost")
 
     # optimization
     global_step = tf.Variable(0, trainable=False)
@@ -94,7 +101,8 @@ class Model():
       train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step,
                   name="minimize_cost")
 
-    return (x_in, ncrp_prior, theta_normalized, z, x_reconstructed, cost, global_step, train_op)
+    return (x_in, ncrp_prior, theta_normalized, z, x_reconstructed, rec_cost_mean, 
+            kl_cost_mean, cost, global_step, train_op)
     
   def train(self, train_data, max_iter=np.inf, max_epochs=np.inf, outdir="./out"):
     saver = tf.train.Saver(tf.all_variables())
@@ -119,8 +127,24 @@ class Model():
             ncrp_prior_vid = ncrp_prior_vid / np.sum(ncrp_prior_vid)
           ncrp_prior_batch.append(ncrp_prior_vid)
         feed_dict = {self.x_in: x, self.ncrp_prior: ncrp_prior_batch}
-        fetches = [self.x_reconstructed, self.theta_normalized, self.z, self.cost, self.global_step, self.train_op]
-        x_reconstructed, theta_normalized, z, cost, iteration, _ = self.session.run(fetches, feed_dict)
+        fetches = [self.x_reconstructed, self.theta_normalized, self.z, self.rec_cost_mean,
+                  self.kl_cost_mean, self.cost, self.global_step, self.train_op]
+        (x_reconstructed, theta_normalized, z, rec_cost_mean, kl_cost_mean, cost, 
+                  iteration, _) = self.session.run(fetches, feed_dict)
+
+        print (np.shape(x))
+        print (np.shape(x_reconstructed))
+
+        if iteration%100 == 0:
+          # write x and x_reconstructed to file
+          with open('data_'+str(iteration)+'.txt', 'w') as f:
+            for i in range(np.size(x, 0)):
+              f.write("Sample " + str(i) + '\n')
+              for j in range(np.size(x,1)):
+                f.write(str(np.round(x[i][j], decimals=2)) + '\t' + 
+                        str(np.round(x_reconstructed[i][j], decimals=2)) + '\t' + 
+                        str(np.round(np.absolute(x[i][j] - x_reconstructed[i][j]), 
+                            decimals=2)) + '\n')
 
         for i in range(len(z)):
           (vidid, frameid) = x_annot[i]
@@ -139,7 +163,7 @@ class Model():
         if iteration%100 == 0:
           Model.write_z(self.path_assignments, "assignments_"+str(iteration)+".txt")
         err_train += cost
-        print (iteration, cost)
+        print (iteration, rec_cost_mean, kl_cost_mean, cost)
         #print (np.shape(theta_normalized))
 
     except KeyboardInterrupt:
