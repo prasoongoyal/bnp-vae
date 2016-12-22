@@ -132,12 +132,12 @@ class Model():
           vid_path_assignments[frameid] = int(z[i][0])
           self.path_assignments[vidid] = vid_path_assignments
 
-        if iteration%10 == 0:
-          ncrp_prior = self.recompute_ncrp(self.path_assignments)
+        if iteration%1 == 0:
+          ncrp_prior = Model.recompute_ncrp(self.path_assignments)
 
         #print (self.path_assignments)
         if iteration%100 == 0:
-          self.write_z(self.path_assignments, "assignments_"+str(iteration)+".txt")
+          Model.write_z(self.path_assignments, "assignments_"+str(iteration)+".txt")
         err_train += cost
         print (iteration, cost)
         #print (np.shape(theta_normalized))
@@ -148,9 +148,58 @@ class Model():
         sys.exit(0)
 
   @staticmethod
-  def recompute_ncrp(path_assignments):
-    
+  def normalize_prob_crp(prob):
+    # replace zeros with GAMMA
+    zero_indices = [i for (i, f) in enumerate(prob) if f==0]
+    try:
+      default_prob = GAMMA / len(zero_indices)
+      prob = list(map(lambda x:default_prob if x==0 else x, prob))
+    except:
+      pass
+    #normalize
+    s = float(sum(prob))
+    if s==0:
+      return prob
+    else:
+      prob_norm = list(map(lambda x: x/s, prob))
+      #print (prob, prob_norm)
+      return prob_norm
 
+  @staticmethod
+  def compute_ncrp_prior(path_freq):
+    #print ("compute ncrp", path_freq)
+    if len(path_freq) == BRANCHING_FACTOR:
+      #s = float(sum(path_freq))
+      #return map(lambda x: x/s, path_freq)
+      return Model.normalize_prob_crp(path_freq)
+    else:
+      # create higher level frequencies
+      parent_freq = []
+      for i in range(int(len(path_freq)/BRANCHING_FACTOR)):
+        parent_freq.append(sum(path_freq[i*BRANCHING_FACTOR:(i+1)*BRANCHING_FACTOR]))
+      # compute probabilities for parents recursively
+      parent_prob = Model.compute_ncrp_prior(parent_freq)
+      #print (parent_freq, parent_prob)
+        
+      # compute probabilities for current level
+      prob = []
+      for i in range(len(parent_freq)):
+        prob += map(lambda x: parent_prob[i] * x,
+                Model.normalize_prob_crp(path_freq[i*BRANCHING_FACTOR:
+                                          (i+1)*BRANCHING_FACTOR]))
+      return prob  
+
+  @staticmethod
+  def recompute_ncrp(path_assignments):
+    ncrp_priors = {}
+    for vidid in path_assignments:
+      path_freq = [0] * NUM_PATHS
+      for frameid in path_assignments[vidid]:
+        path_freq[int(path_assignments[vidid][frameid])] += 1
+      ncrp_priors[vidid] = Model.compute_ncrp_prior(path_freq)
+      #print (vidid, path_freq, ncrp_priors[vidid])
+    return ncrp_priors
+        
   @staticmethod
   def write_z(z, filename):
     fileptr = open(filename, 'w')
@@ -172,7 +221,8 @@ class Model():
       ncrp_prior_ = tf.clip_by_value(ncrp_prior, offset, 1-offset)
       log_theta_normalized = tf.log(theta_normalized_, name="log_theta_normalized")
       log_ncrp_prior = tf.log(ncrp_prior_, name="log_ncrp_prior")
-      log_diff = tf.subtract(log_ncrp_prior, log_theta_normalized, name="log_diff")
+      #log_diff = tf.subtract(log_ncrp_prior, log_theta_normalized, name="log_diff")
+      log_diff = tf.subtract(log_theta_normalized, log_ncrp_prior, name="log_diff")
       return tf.reduce_sum(tf.multiply(theta_normalized_, log_diff), 1)
     
 

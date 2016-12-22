@@ -5,8 +5,9 @@ import sys
 from functional import compose, partial
 
 IMG_DIM = (64, 36, 3)
-BRANCHING_FACTOR = 3
-NUM_LEVELS = 4
+GAMMA = 1.0
+BRANCHING_FACTOR = 2
+NUM_LEVELS = 3
 NUM_PATHS = BRANCHING_FACTOR ** (NUM_LEVELS - 1)
 
 def get_videoid_frameid(path):
