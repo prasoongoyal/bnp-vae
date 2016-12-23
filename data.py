@@ -39,11 +39,12 @@ class Data():
     batch_annot = []
     for image_info in curr_batch:
       img = Image.open(image_info[0])
-      img = img.resize((36, 64))
+      img = img.resize((360, 640))
       img_arr = np.asarray(img)
       img_arr = img_arr / 255.0
       #print (np.shape(img_arr))
-      batch.append(np.ndarray.flatten(img_arr))
+      #batch.append(np.ndarray.flatten(img_arr))
+      batch.append(img_arr)
       batch_annot.append((image_info[1], image_info[2]))
 
     #print (len(result))

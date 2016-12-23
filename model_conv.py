@@ -61,29 +61,161 @@ class Model():
       return sample_idx
       #return tf.to_float(sample_idx_reshaped)
 
+  # Create some wrappers for simplicity
+  def conv2d(x, W, b, strides=1):
+      # Conv2D wrapper, with bias and relu activation
+      x = tf.nn.conv2d(x, W, strides=[1, strides, strides, 1], padding='SAME')
+      x = tf.nn.bias_add(x, b)
+      return tf.nn.relu(x)
+
+
+  def maxpool2d(x, k=2):
+      # MaxPool2D wrapper
+      return tf.nn.max_pool(x, ksize=[1, k, k, 1], strides=[1, k, k, 1],
+  padding='SAME')
+
+  @staticmethod
+  def conv_pool(x_in, conv_W, conv_b, conv_ksize, pool_size):
+    pad_size = int((conv_ksize - 1)/2)
+    x_pad = tf.pad(x_in, [[0, 0], [pad_size, pad_size], [pad_size, pad_size], [0, 0]])
+    x_conv = tf.nn.conv2d(x_pad, conv_W, [1, 1, 1, 1], "VALID")
+    x_pool = tf.nn.max_pool(tf.tanh(x_conv), [1, pool_size, pool_size, 1], 
+                           [1, pool_size, pool_size, 1], "VALID")
+    return x_pool
+
+  @staticmethod
+  def conv_unpool(x_in, conv_W, conv_b, conv_ksize, pool_size):
+    orig_height = x_in.get_shape()[1].value
+    orig_width = x_in.get_shape()[2].value
+    new_height = orig_height * pool_size
+    new_width = orig_width * pool_size
+
+    pad_size = int((conv_ksize - 1)/2)
+    x_pad = tf.pad(x_in, [[0, 0], [pad_size, pad_size], [pad_size, pad_size], [0, 0]])
+    x_conv = tf.nn.conv2d(x_pad, conv_W, [1, 1, 1, 1], "VALID")
+    #x_pool = tf.nn.max_pool(tf.tanh(x_conv), [1, pool_size, pool_size, 1], 
+    #                       [1, pool_size, pool_size, 1], "VALID")
+    x_unpool = tf.image.resize_images(tf.tanh(x_conv), [new_height, new_width])
+    return x_unpool
+
   def buildGraph(self):
-    x_in = tf.placeholder(tf.float32, shape=[None, self.architecture[0]], name="x")
+    #x_in = tf.placeholder(tf.float32, shape=[None, self.architecture[0]], name="x")
+    x_in = tf.placeholder(tf.float32, shape=[None, 640, 360, 3], name="x")
     ncrp_prior = tf.placeholder(tf.float32, shape=[None, self.architecture[-1]], 
                  name="ncrp_prior")
     dropout = tf.placeholder_with_default(1., shape=[], name="dropout")
+    enc_conv_filters = {
+      'layer1': tf.Variable(tf.random_normal([5, 5, 3, 32])),
+      'layer2': tf.Variable(tf.random_normal([5, 5, 32, 32])),
+      'layer3': tf.Variable(tf.random_normal([3, 3, 32, 16])),
+    }
+    enc_conv_biases = {
+      'layer1': tf.Variable(tf.random_normal([32])),
+      'layer2': tf.Variable(tf.random_normal([32])),
+      'layer3': tf.Variable(tf.random_normal([16])),
+    }
+
+    dec_conv_filters = {
+      'layer1': tf.Variable(tf.random_normal([3, 3, 16, 32])),
+      'layer2': tf.Variable(tf.random_normal([5, 5, 32, 32])),
+      'layer3': tf.Variable(tf.random_normal([5, 5, 32, 3])),
+    }
+    dec_conv_biases = {
+      'layer1': tf.Variable(tf.random_normal([32])),
+      'layer2': tf.Variable(tf.random_normal([32])),
+      'layer3': tf.Variable(tf.random_normal([3])),
+    }
+
+    fc_weights = {
+      'layer1': tf.Variable(tf.random_normal([32*18*16, 1024])),
+      'layer2': tf.Variable(tf.random_normal([1024, NUM_PATHS])),
+      'layer3': tf.Variable(tf.random_normal([10, 1024])),
+      'layer4': tf.Variable(tf.random_normal([1024, 32*18*16])),
+    }
+    fc_biases = {
+      'layer1': tf.Variable(tf.random_normal([1024])),
+      'layer2': tf.Variable(tf.random_normal([NUM_PATHS])),
+      'layer3': tf.Variable(tf.random_normal([1024])),
+      'layer4': tf.Variable(tf.random_normal([32*18*16])),
+    }
 
     embedding =  tf.Variable(tf.random_normal(([NUM_PATHS, 10])))
 
+    x_layer1 = self.conv_pool(x_in, enc_conv_filters['layer1'], 
+                              enc_conv_biases['layer1'], 5, 2)
+    x_layer2 = self.conv_pool(x_layer1, enc_conv_filters['layer2'], 
+                              enc_conv_biases['layer2'], 5, 2)
+    x_layer3 = self.conv_pool(x_layer2, enc_conv_filters['layer3'], 
+                              enc_conv_biases['layer3'], 3, 5)
+
+    x_flatten = tf.reshape(x_layer3, [-1, 32*18*16], name="x_flatten")
+
+    x_fc1 = tf.add(tf.matmul(x_flatten, fc_weights['layer1']), fc_biases['layer1'])
+    x_fc1_dropout = tf.nn.dropout(tf.tanh(x_fc1), dropout)
+    x_fc2 = tf.add(tf.matmul(x_fc1_dropout, fc_weights['layer2']), fc_biases['layer2'])
+    x_fc2_dropout = tf.nn.dropout(tf.tanh(x_fc2), dropout)
+
+    print (x_layer1.get_shape())
+    print (x_layer2.get_shape())
+    print (x_layer3.get_shape())
+    print (x_flatten.get_shape())
+    print (x_fc1.get_shape())
+    print (x_fc1_dropout.get_shape())
+    print (x_fc2.get_shape())
+    print (x_fc2_dropout.get_shape())
+
+    """
+    x_pad1 = tf.pad(x_in, [[0, 0], [2, 2], [2, 2], [0, 0]], name="x_pad1")
+    x_conv1 = tf.nn.conv2d(x_pad1, weights['conv1'], [1, 1, 1, 1], "VALID", name="x_conv1")
+    x_pool1 = tf.nn.max_pool(tf.tanh(x_conv1), [1, 2, 2, 1], [1, 2, 2, 1], "VALID", 
+              name="x_pool1")
+    print (x_pool1.get_shape())
+
+    x_pad2 = tf.pad(x_pool1, [[0, 0], [2, 2], [2, 2], [0, 0]], name="x_pad2")
+    x_conv2 = tf.nn.conv2d(x_pad2, weights['conv2'], [1, 1, 1, 1], "VALID", name="x_conv2")
+    print (x_conv2.get_shape())
+    
     encoding = [Dense("encoding", hidden_size, dropout, self.nonlinearity)
                 for hidden_size in reversed(self.architecture[1:-1])]
     h_encoded = composeAll(encoding)(x_in)
-
+    
     log_theta_unnormalized = Dense("log_theta_unnormalized", 
                                     self.architecture[-1], dropout)(h_encoded)
-    theta_normalized = tf.nn.softmax(log_theta_unnormalized)
+    """
+
+    theta_normalized = tf.nn.softmax(x_fc2_dropout)
     z = self.sampleMultinomial(theta_normalized)
 
     embed_z = tf.nn.embedding_lookup(embedding, z, name="embed_z")
 
+    # reconstruction
+    z_fc3 = tf.add(tf.matmul(embed_z, fc_weights['layer3']), fc_biases['layer3'])
+    z_fc3_dropout = tf.nn.dropout(tf.tanh(z_fc3), dropout)
+    z_fc4 = tf.add(tf.matmul(z_fc3_dropout, fc_weights['layer4']), fc_biases['layer4'])
+    z_fc4_dropout = tf.nn.dropout(tf.tanh(z_fc4), dropout)
+
+    print (z_fc4_dropout.get_shape())
+
+    z_reshape = tf.reshape(z_fc4_dropout, [-1, 32, 18, 16], name="z_reshape")
+    print (z_reshape.get_shape())
+    z_layer1 = self.conv_unpool(z_reshape, dec_conv_filters['layer1'], 
+                                dec_conv_biases['layer1'], 3, 5)
+    print (z_layer1.get_shape())
+    z_layer2 = self.conv_unpool(z_layer1, dec_conv_filters['layer2'], 
+                                dec_conv_biases['layer2'], 5, 2)
+    print (z_layer2.get_shape())
+    x_reconstructed = self.conv_unpool(z_layer2, dec_conv_filters['layer3'], 
+                                dec_conv_biases['layer3'], 5, 2)
+    
+    print (x_reconstructed.get_shape())
+
+
+    """
     decoding = [Dense("decoding", hidden_size, dropout, self.nonlinearity)
                 for hidden_size in self.architecture[1:-1]]
     decoding.insert(0, Dense("x_decoding", self.architecture[0], dropout, self.squashing))
     x_reconstructed = tf.identity(composeAll(decoding)(embed_z), name="x_reconstructed")
+    """
 
     rec_loss = Model.l2_loss(x_reconstructed, x_in)
     kl_loss = Model.kl_loss(theta_normalized, ncrp_prior)

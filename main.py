@@ -6,6 +6,7 @@ import tensorflow as tf
 
 from data import Data
 from model import Model
+from model_conv import Model
 
 #import vae
 
