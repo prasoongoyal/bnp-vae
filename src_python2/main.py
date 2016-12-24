@@ -15,8 +15,8 @@ from numpy.random import permutation
 
 def main(files_list, resume_training = None):
   #data = load_data(files_list)
-  train_data = Data(files_list, 128)
-  model = Model(batch_size=128)
+  train_data = Data(files_list, 32)
+  model = Model(batch_size=32)
   model.train(train_data)
 
 if __name__ == u"__main__":
