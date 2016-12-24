@@ -105,7 +105,7 @@ class Model(object):
 
   def buildGraph(self):
     #x_in = tf.placeholder(tf.float32, shape=[None, self.architecture[0]], name="x")
-    x_in = tf.placeholder(tf.float32, shape=[None, 640, 360, 3], name=u"x")
+    x_in = tf.placeholder(tf.float32, shape=[None, 480, 360, 3], name=u"x")
     ncrp_prior = tf.placeholder(tf.float32, shape=[None, self.architecture[-1]], 
                  name=u"ncrp_prior")
     dropout = tf.placeholder_with_default(1., shape=[], name=u"dropout")
@@ -132,28 +132,28 @@ class Model(object):
     }
 
     fc_weights = {
-      u'layer1': tf.Variable(tf.random_normal([32*18*16, 1024])),
-      u'layer2': tf.Variable(tf.random_normal([1024, NUM_PATHS])),
-      u'layer3': tf.Variable(tf.random_normal([10, 1024])),
-      u'layer4': tf.Variable(tf.random_normal([1024, 32*18*16])),
+      u'layer1': tf.Variable(tf.random_normal([8*6*16, 256])),
+      u'layer2': tf.Variable(tf.random_normal([256, NUM_PATHS])),
+      u'layer3': tf.Variable(tf.random_normal([10, 256])),
+      u'layer4': tf.Variable(tf.random_normal([256, 8*6*16])),
     }
     fc_biases = {
-      u'layer1': tf.Variable(tf.random_normal([1024])),
+      u'layer1': tf.Variable(tf.random_normal([256])),
       u'layer2': tf.Variable(tf.random_normal([NUM_PATHS])),
-      u'layer3': tf.Variable(tf.random_normal([1024])),
-      u'layer4': tf.Variable(tf.random_normal([32*18*16])),
+      u'layer3': tf.Variable(tf.random_normal([256])),
+      u'layer4': tf.Variable(tf.random_normal([8*6*16])),
     }
 
     embedding =  tf.Variable(tf.random_normal(([NUM_PATHS, 10])))
 
     x_layer1 = self.conv_pool(x_in, enc_conv_filters[u'layer1'], 
-                              enc_conv_biases[u'layer1'], 5, 2)
+                              enc_conv_biases[u'layer1'], 5, 3)
     x_layer2 = self.conv_pool(x_layer1, enc_conv_filters[u'layer2'], 
-                              enc_conv_biases[u'layer2'], 5, 2)
+                              enc_conv_biases[u'layer2'], 5, 4)
     x_layer3 = self.conv_pool(x_layer2, enc_conv_filters[u'layer3'], 
                               enc_conv_biases[u'layer3'], 3, 5)
 
-    x_flatten = tf.reshape(x_layer3, [-1, 32*18*16], name=u"x_flatten")
+    x_flatten = tf.reshape(x_layer3, [-1, 8*6*16], name=u"x_flatten")
 
     x_fc1 = tf.add(tf.matmul(x_flatten, fc_weights[u'layer1']), fc_biases[u'layer1'])
     x_fc1_dropout = tf.nn.dropout(tf.tanh(x_fc1), dropout)
@@ -201,16 +201,16 @@ class Model(object):
 
     print z_fc4_dropout.get_shape()
 
-    z_reshape = tf.reshape(z_fc4_dropout, [-1, 32, 18, 16], name=u"z_reshape")
+    z_reshape = tf.reshape(z_fc4_dropout, [-1, 8, 6, 16], name=u"z_reshape")
     print z_reshape.get_shape()
     z_layer1 = self.conv_unpool(z_reshape, dec_conv_filters[u'layer1'], 
                                 dec_conv_biases[u'layer1'], 3, 5)
     print z_layer1.get_shape()
     z_layer2 = self.conv_unpool(z_layer1, dec_conv_filters[u'layer2'], 
-                                dec_conv_biases[u'layer2'], 5, 2)
+                                dec_conv_biases[u'layer2'], 5, 4)
     print z_layer2.get_shape()
     x_reconstructed = self.conv_unpool(z_layer2, dec_conv_filters[u'layer3'], 
-                                dec_conv_biases[u'layer3'], 5, 2)
+                                dec_conv_biases[u'layer3'], 5, 3)
     
     print x_reconstructed.get_shape()
 
@@ -406,4 +406,4 @@ class Model(object):
   @staticmethod
   def l2_loss(obs, actual):
     with tf.name_scope(u"l2_loss"):
-      return tf.reduce_mean(tf.square(obs - actual), 1)
+      return tf.reduce_mean(tf.square(obs - actual), [1, 2, 3])

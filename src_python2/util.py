@@ -5,7 +5,7 @@ import functools
 import sys
 from functional import compose, partial
 
-IMG_DIM = (640, 360, 3)
+IMG_DIM = (480, 360, 3)
 GAMMA = 1.0
 BRANCHING_FACTOR = 3
 NUM_LEVELS = 4

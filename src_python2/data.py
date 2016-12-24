@@ -43,7 +43,7 @@ class Data(object):
     batch_annot = []
     for image_info in curr_batch:
       img = Image.open(image_info[0])
-      img = img.resize((360, 640))
+      img = img.resize((360, 480))
       img_arr = np.asarray(img)
       img_arr = img_arr / 255.0
       #print (np.shape(img_arr))
