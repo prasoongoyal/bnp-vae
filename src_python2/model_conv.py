@@ -37,7 +37,7 @@ class Model(object):
     # initialize path assignments (map of maps)
     self.path_assignments = {}
 
-    self.session = tf.Session(config=tf.ConfigProto(log_device_placement=False))
+    self.session = tf.Session(config=tf.ConfigProto(log_device_placement=True))
     handles = self.buildGraph()
     self.session.run(tf.initialize_all_variables())
     
@@ -132,15 +132,15 @@ class Model(object):
     }
 
     fc_weights = {
-      u'layer1': tf.Variable(tf.random_normal([8*6*16, 256])),
-      u'layer2': tf.Variable(tf.random_normal([256, NUM_PATHS])),
-      u'layer3': tf.Variable(tf.random_normal([10, 256])),
-      u'layer4': tf.Variable(tf.random_normal([256, 8*6*16])),
+      u'layer1': tf.Variable(tf.random_normal([8*6*16, 16])),
+      u'layer2': tf.Variable(tf.random_normal([16, NUM_PATHS])),
+      u'layer3': tf.Variable(tf.random_normal([10, 16])),
+      u'layer4': tf.Variable(tf.random_normal([16, 8*6*16])),
     }
     fc_biases = {
-      u'layer1': tf.Variable(tf.random_normal([256])),
+      u'layer1': tf.Variable(tf.random_normal([16])),
       u'layer2': tf.Variable(tf.random_normal([NUM_PATHS])),
-      u'layer3': tf.Variable(tf.random_normal([256])),
+      u'layer3': tf.Variable(tf.random_normal([16])),
       u'layer4': tf.Variable(tf.random_normal([8*6*16])),
     }
 
@@ -278,9 +278,9 @@ class Model(object):
         #print (np.shape(x))
         #print (np.shape(x_reconstructed))
 
-        if iteration%100 == 0:
+        if iteration%1000 == 0:
           # write x and x_reconstructed to file
-          with open(u'data_'+unicode(iteration)+u'.txt', u'w') as f:
+          with open(u'data_nokl56_'+unicode(iteration)+u'.txt', u'w') as f:
             for i in xrange(np.size(x, 0)):
               f.write(u"Sample " + unicode(i) + u'\n')
               for j in xrange(np.size(x,1)):
@@ -289,15 +289,20 @@ class Model(object):
                         unicode(np.round(np.absolute(x[i][j] - x_reconstructed[i][j]), 
                             decimals=2)) + u'\n')
 
-        print np.shape(embedding)
+        #print np.shape(embedding)
 
-        if iteration%10 == 1:
+        if iteration%1000 == 1:
           # write embeddings to file
-          with open(u'embedding_'+unicode(iteration)+u'.txt', u'w') as f:
+          with open(u'embedding_nokl56_'+unicode(iteration)+u'.txt', u'w') as f:
             for i in xrange(np.size(embedding, 0)):
               for j in xrange(np.size(embedding, 1)):
                 f.write(unicode(np.round(embedding[i][j], decimals=2)) + u'\t')
               f.write(u'\n')
+
+        if iteration%1000 == 0:
+          # write model
+          saver.save(self.session, "model56_nokl56.model", global_step =
+                  iteration)
 
         for i in xrange(len(z)):
           (vidid, frameid) = x_annot[i]
@@ -313,8 +318,8 @@ class Model(object):
           ncrp_prior = Model.recompute_ncrp(self.path_assignments)
 
         #print (self.path_assignments)
-        if iteration%100 == 0:
-          Model.write_z(self.path_assignments, u"assignments_"+unicode(iteration)+u".txt")
+        if iteration%1000 == 0:
+          Model.write_z(self.path_assignments, u"assignments_nokl56_"+unicode(iteration)+u".txt")
         err_train += cost
         print iteration, rec_cost_mean, kl_cost_mean, cost
         #print (np.shape(theta_normalized))
