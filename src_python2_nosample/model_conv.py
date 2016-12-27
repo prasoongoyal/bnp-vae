@@ -6,6 +6,7 @@ import sys
 import json
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.client import timeline
 
 from util import *
 from layers import *
@@ -16,7 +17,7 @@ DEFAULT_ARCH = [np.prod(IMG_DIM), 1024, 1024, NUM_PATHS]
 DEFAULT_LEARNING_RATE = 1E-3
 class Model(object):
   # TODO: Add arguments for architecture, learning rate, etc.
-  def __init__(self, batch_size):
+  def __init__(self, batch_size, output_dir):
     u"""
     if architecture == None:
       self.architecture = DEFAULT_ARCH
@@ -33,11 +34,12 @@ class Model(object):
     self.learning_rate = DEFAULT_LEARNING_RATE
     self.nonlinearity = tf.nn.elu
     self.squashing = tf.nn.sigmoid
+    self.output_dir = output_dir
 
     # initialize path assignments (map of maps)
     self.path_assignments = {}
 
-    self.session = tf.Session(config=tf.ConfigProto(log_device_placement=True))
+    self.session = tf.Session(config=tf.ConfigProto(log_device_placement=False))
     handles = self.buildGraph()
     self.session.run(tf.initialize_all_variables())
     
@@ -108,7 +110,7 @@ class Model(object):
     x_in = tf.placeholder(tf.float32, shape=[None, 480, 360, 3], name=u"x")
     ncrp_prior = tf.placeholder(tf.float32, shape=[None, self.architecture[-1]], 
                  name=u"ncrp_prior")
-    dropout = tf.placeholder_with_default(1., shape=[], name=u"dropout")
+    dropout = tf.placeholder_with_default(1.0, shape=[], name=u"dropout")
     enc_conv_filters = {
       u'layer1': tf.Variable(tf.random_normal([5, 5, 3, 32])),
       u'layer2': tf.Variable(tf.random_normal([5, 5, 32, 32])),
@@ -134,7 +136,7 @@ class Model(object):
     fc_weights = {
       u'layer1': tf.Variable(tf.random_normal([8*6*16, 16])),
       u'layer2': tf.Variable(tf.random_normal([16, NUM_PATHS])),
-      u'layer3': tf.Variable(tf.random_normal([10, 16])),
+      u'layer3': tf.Variable(tf.random_normal([NUM_PATHS, 16])),
       u'layer4': tf.Variable(tf.random_normal([16, 8*6*16])),
     }
     fc_biases = {
@@ -190,8 +192,8 @@ class Model(object):
     z_layer2 = self.conv_unpool(z_layer1, dec_conv_filters[u'layer2'], 
                                 dec_conv_biases[u'layer2'], 5, 4)
     print z_layer2.get_shape()
-    x_reconstructed = self.conv_unpool(z_layer2, dec_conv_filters[u'layer3'], 
-                                dec_conv_biases[u'layer3'], 5, 3)
+    x_reconstructed = tf.sigmoid(self.conv_unpool(z_layer2, dec_conv_filters[u'layer3'], 
+                                dec_conv_biases[u'layer3'], 5, 3))
     
     print x_reconstructed.get_shape()
 
@@ -214,6 +216,8 @@ class Model(object):
       optimizer = tf.train.AdamOptimizer(self.learning_rate)
       tvars = tf.trainable_variables()
       grads_and_vars = optimizer.compute_gradients(cost, tvars)
+      for (g, v) in grads_and_vars:
+          print g, '\t', v.name
       train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step,
                   name=u"minimize_cost")
 
@@ -246,8 +250,19 @@ class Model(object):
         fetches = [self.x_reconstructed, self.theta_normalized, self.rec_cost_mean,
                   self.kl_cost_mean, self.cost, self.global_step, self.train_op, 
                   self.embedding]
-        (x_reconstructed, theta_normalized, rec_cost_mean, kl_cost_mean, cost, 
-                  iteration, _, embedding) = self.session.run(fetches, feed_dict)
+
+        #run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+        #run_metadata = tf.RunMetadata()
+        (x_reconstructed, theta_normalized, rec_cost_mean, kl_cost_mean, cost,
+                  iteration, _, embedding) = self.session.run(fetches,
+                          feed_dict)
+
+        '''
+        tl = timeline.Timeline(run_metadata.step_stats)
+        ctf = tl.generate_chrome_trace_format()
+        with tf.gfile.Open('timeline_' + str(iteration) + '.json', 'w') as f:
+          f.write(ctf)
+        '''
 
         #print (np.shape(x))
         #print (np.shape(x_reconstructed))
@@ -255,7 +270,7 @@ class Model(object):
 
         if iteration%1000 == 0:
           # write x and x_reconstructed to file
-          with open(u'data_nokl56_'+unicode(iteration)+u'.txt', u'w') as f:
+          with open(self.output_dir+u'data_nokl56_'+unicode(iteration)+u'.txt', u'w') as f:
             for i in xrange(np.size(x, 0)):
               f.write(u"Sample " + unicode(i) + u'\n')
               for j in xrange(np.size(x,1)):
@@ -268,7 +283,7 @@ class Model(object):
 
         if iteration%1000 == 1:
           # write embeddings to file
-          with open(u'embedding_nokl56_'+unicode(iteration)+u'.txt', u'w') as f:
+          with open(self.output_dir+u'embedding_nokl56_'+unicode(iteration)+u'.txt', u'w') as f:
             for i in xrange(np.size(embedding, 0)):
               for j in xrange(np.size(embedding, 1)):
                 f.write(unicode(np.round(embedding[i][j], decimals=2)) + u'\t')
@@ -276,7 +291,7 @@ class Model(object):
 
         if iteration%1000 == 0:
           # write model
-          saver.save(self.session, "model56_nokl56.model", global_step =
+          saver.save(self.session, self.output_dir+"model56_nokl56.model", global_step =
                   iteration)
 
         for i in xrange(len(z)):
@@ -294,7 +309,7 @@ class Model(object):
 
         #print (self.path_assignments)
         if iteration%1000 == 0:
-          Model.write_z(self.path_assignments, u"assignments_nokl56_"+unicode(iteration)+u".txt")
+          Model.write_z(self.path_assignments, self.output_dir+u"assignments_nokl56_"+unicode(iteration)+u".txt")
         err_train += cost
         print iteration, rec_cost_mean, kl_cost_mean, cost
         #print (np.shape(theta_normalized))
