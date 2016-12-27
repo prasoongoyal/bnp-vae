@@ -1,9 +1,7 @@
 from __future__ import absolute_import
 import numpy as np
 import tensorflow as tf
-import functools
 import sys
-from functional import compose, partial
 
 IMG_DIM = (480, 360, 3)
 GAMMA = 1.0
@@ -23,13 +21,4 @@ def get_videoid_frameid(path):
     return videoid, frameid
   except:
     sys.exit(u'Invalid file name format!')
-
-def composeAll(*args):
-  u"""Util for multiple function composition
-
-  i.e. composed = composeAll([f, g, h])
-       composed(x) # == f(g(h(x)))
-  """
-  # adapted from https://docs.python.org/3.1/howto/functional.html
-  return partial(functools.reduce, compose)(*args)
 
