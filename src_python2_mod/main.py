@@ -3,7 +3,7 @@ import os
 import sys
 
 from data import Data
-from model_conv import Model
+from model import Model
 from util import *
 
 
