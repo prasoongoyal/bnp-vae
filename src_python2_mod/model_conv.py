@@ -62,8 +62,9 @@ class Model(object):
     final_size = (int(IMG_DIM['width'] / np.prod(POOL_SIZES)), 
                   int(IMG_DIM['height'] / np.prod(POOL_SIZES)),
                   CONV_NUM_CHANNELS[-1])
-    FC_SIZES = [int(np.prod(final_size)), 16]
+    FC_SIZES = [int(np.prod(final_size)), 16, NUM_PATHS]
 
+    """
     fc_weights = {
       'layer1': tf.Variable(tf.random_normal([FC_SIZES[0], FC_SIZES[1]])),
       'layer2': tf.Variable(tf.random_normal([FC_SIZES[1], NUM_PATHS])),
@@ -76,37 +77,48 @@ class Model(object):
       'layer3': tf.Variable(tf.random_normal([FC_SIZES[1]])),
       'layer4': tf.Variable(tf.random_normal([FC_SIZES[0]])),
     }
+    """
 
     embedding =  tf.Variable(tf.random_normal(([NUM_PATHS, 10])))
 
-    encoder_layers = [ConvPool("encoder_conv_pool", conv_kernel_size, conv_output_channels,
+    enc_conv_layers = [ConvPool('encoder_conv_pool', conv_kernel_size, conv_output_channels,
                       pool_size, tf.tanh) for (conv_kernel_size, conv_output_channels, 
                       pool_size) in zip(CONV_FILTER_SIZES, CONV_NUM_CHANNELS[1:], POOL_SIZES)]
-    x_layer3 = composeAll(reversed(encoder_layers))(x_in)
+    x_layer3 = composeAll(reversed(enc_conv_layers))(x_in)
 
     x_flatten = tf.reshape(x_layer3, [-1, int(np.prod(final_size))], name='x_flatten')
 
-    x_fc1 = tf.add(tf.matmul(x_flatten, fc_weights['layer1']), fc_biases['layer1'])
-    x_fc1_dropout = tf.nn.dropout(tf.tanh(x_fc1), dropout)
-    x_fc2 = tf.add(tf.matmul(x_fc1_dropout, fc_weights['layer2']), fc_biases['layer2'])
-    x_fc2_dropout = tf.nn.dropout(tf.tanh(x_fc2), dropout)
+    #x_fc1 = tf.add(tf.matmul(x_flatten, fc_weights['layer1']), fc_biases['layer1'])
+    enc_fc_layers = [Dense('enc_fc', output_size, dropout, tf.tanh) 
+                     for output_size in FC_SIZES[1:]]
+    x_fc2_dropout = composeAll(reversed(enc_fc_layers))(x_flatten)
+    #x_fc2 = Dense('enc_fc2', FC_SIZES[2], dropout, tf.tanh)
+    #x_fc1_dropout = tf.nn.dropout(tf.tanh(x_fc1), dropout)
+    #x_fc2 = tf.add(tf.matmul(x_fc1_dropout, fc_weights['layer2']), fc_biases['layer2'])
+    #x_fc2_dropout = tf.nn.dropout(tf.tanh(x_fc2), dropout)
 
     theta_normalized = tf.nn.softmax(x_fc2_dropout)
 
     # reconstruction
+    '''
     z_fc3 = tf.add(tf.matmul(theta_normalized, fc_weights['layer3']), fc_biases['layer3'])
     z_fc3_dropout = tf.nn.dropout(tf.tanh(z_fc3), dropout)
     z_fc4 = tf.add(tf.matmul(z_fc3_dropout, fc_weights['layer4']), fc_biases['layer4'])
     z_fc4_dropout = tf.nn.dropout(tf.tanh(z_fc4), dropout)
+    '''
+
+    dec_fc_layers = [Dense('dec_fc', output_size, dropout, tf.tanh)
+                     for output_size in FC_SIZES[:-1]]
+    z_fc4_dropout = composeAll(dec_fc_layers)(theta_normalized)
 
     z_reshape = tf.reshape(z_fc4_dropout, [-1, final_size[0], final_size[1], final_size[2]], 
                            name='z_reshape')
 
-    decoder_layers = [DeconvUnpool("decoder_deconv_unpool", deconv_kernel_size, 
+    dec_conv_layers = [DeconvUnpool('decoder_deconv_unpool', deconv_kernel_size, 
                       deconv_output_channels, unpool_size, tf.tanh) for (deconv_kernel_size,
                       deconv_output_channels, unpool_size) in zip(CONV_FILTER_SIZES,
                       CONV_NUM_CHANNELS[:-1], POOL_SIZES)]
-    x_reconstructed = tf.sigmoid(composeAll(decoder_layers)(z_reshape))
+    x_reconstructed = tf.sigmoid(composeAll(dec_conv_layers)(z_reshape))
 
     rec_loss = Model.l2_loss(x_reconstructed, x_in)
     kl_loss = Model.kl_loss(theta_normalized, ncrp_prior)
