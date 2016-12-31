@@ -32,9 +32,8 @@ class Model(object):
     handles = self.buildGraph()
     self.session.run(tf.initialize_all_variables())
     
-    (self.x_in, self.ncrp_prior, self.theta_normalized, self.x_reconstructed, 
-        self.rec_cost_mean, self.kl_cost_mean, self.cost, self.global_step, 
-        self.train_op, self.embedding) = handles
+    (self.x_in, self.ncrp_prior, self.path_prob, self.x_reconstructed, self.rec_cost_mean, 
+     self.kl_cost_mean, self.cost, self.global_step, self.train_op) = handles
 
   def sampleMultinomial(self, theta_normalized):
     with tf.name_scope('sample_multinomial'):
@@ -58,26 +57,12 @@ class Model(object):
     CONV_FILTER_SIZES = [5, 5, 3]
     CONV_NUM_CHANNELS = [IMG_DIM['channels'], 32, 32, 16]
     POOL_SIZES = [3, 4, 5]
+    LATENT_CODE_SIZE = 10
 
     final_size = (int(IMG_DIM['width'] / np.prod(POOL_SIZES)), 
                   int(IMG_DIM['height'] / np.prod(POOL_SIZES)),
                   CONV_NUM_CHANNELS[-1])
-    FC_SIZES = [int(np.prod(final_size)), 16, NUM_PATHS]
-
-    """
-    fc_weights = {
-      'layer1': tf.Variable(tf.random_normal([FC_SIZES[0], FC_SIZES[1]])),
-      'layer2': tf.Variable(tf.random_normal([FC_SIZES[1], NUM_PATHS])),
-      'layer3': tf.Variable(tf.random_normal([NUM_PATHS, FC_SIZES[1]])),
-      'layer4': tf.Variable(tf.random_normal([FC_SIZES[1], FC_SIZES[0]])),
-    }
-    fc_biases = {
-      'layer1': tf.Variable(tf.random_normal([FC_SIZES[1]])),
-      'layer2': tf.Variable(tf.random_normal([NUM_PATHS])),
-      'layer3': tf.Variable(tf.random_normal([FC_SIZES[1]])),
-      'layer4': tf.Variable(tf.random_normal([FC_SIZES[0]])),
-    }
-    """
+    FC_SIZES = [int(np.prod(final_size)), 16, 16]
 
     embedding =  tf.Variable(tf.random_normal(([NUM_PATHS, 10])))
 
@@ -88,28 +73,24 @@ class Model(object):
 
     x_flatten = tf.reshape(x_layer3, [-1, int(np.prod(final_size))], name='x_flatten')
 
-    #x_fc1 = tf.add(tf.matmul(x_flatten, fc_weights['layer1']), fc_biases['layer1'])
     enc_fc_layers = [Dense('enc_fc', output_size, dropout, tf.tanh) 
                      for output_size in FC_SIZES[1:]]
-    x_fc2_dropout = composeAll(reversed(enc_fc_layers))(x_flatten)
-    #x_fc2 = Dense('enc_fc2', FC_SIZES[2], dropout, tf.tanh)
-    #x_fc1_dropout = tf.nn.dropout(tf.tanh(x_fc1), dropout)
-    #x_fc2 = tf.add(tf.matmul(x_fc1_dropout, fc_weights['layer2']), fc_biases['layer2'])
-    #x_fc2_dropout = tf.nn.dropout(tf.tanh(x_fc2), dropout)
+    x_encoded = composeAll(reversed(enc_fc_layers))(x_flatten)
 
-    theta_normalized = tf.nn.softmax(x_fc2_dropout)
+    # probability over paths, to be used in KL-loss
+    path_prob = Dense('path_prob', NUM_PATHS, 1., tf.nn.sigmoid)(x_encoded)
+
+    # mean and standard deviation for sampling latent code
+    z_mean= Dense('z_mean', LATENT_CODE_SIZE)(x_encoded)
+    z_log_sigma = Dense('z_log_std', LATENT_CODE_SIZE)(x_encoded)
+
+    # sample latent code
+    z = self.sampleGaussian(z_mean, z_log_sigma)
 
     # reconstruction
-    '''
-    z_fc3 = tf.add(tf.matmul(theta_normalized, fc_weights['layer3']), fc_biases['layer3'])
-    z_fc3_dropout = tf.nn.dropout(tf.tanh(z_fc3), dropout)
-    z_fc4 = tf.add(tf.matmul(z_fc3_dropout, fc_weights['layer4']), fc_biases['layer4'])
-    z_fc4_dropout = tf.nn.dropout(tf.tanh(z_fc4), dropout)
-    '''
-
     dec_fc_layers = [Dense('dec_fc', output_size, dropout, tf.tanh)
                      for output_size in FC_SIZES[:-1]]
-    z_fc4_dropout = composeAll(dec_fc_layers)(theta_normalized)
+    z_fc4_dropout = composeAll(dec_fc_layers)(z)
 
     z_reshape = tf.reshape(z_fc4_dropout, [-1, final_size[0], final_size[1], final_size[2]], 
                            name='z_reshape')
@@ -121,7 +102,7 @@ class Model(object):
     x_reconstructed = tf.sigmoid(composeAll(dec_conv_layers)(z_reshape))
 
     rec_loss = Model.l2_loss(x_reconstructed, x_in)
-    kl_loss = Model.kl_loss(theta_normalized, ncrp_prior)
+    kl_loss = Model.kl_loss(path_prob, ncrp_prior)
 
     with tf.name_scope('rec_cost_mean'):
       rec_cost_mean = tf.reduce_mean(rec_loss)
@@ -141,8 +122,8 @@ class Model(object):
       train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step,
                   name='minimize_cost')
 
-    return (x_in, ncrp_prior, theta_normalized, x_reconstructed, rec_cost_mean, 
-            kl_cost_mean, cost, global_step, train_op, embedding)
+    return (x_in, ncrp_prior, path_prob, x_reconstructed, rec_cost_mean, 
+            kl_cost_mean, cost, global_step, train_op)
     
   def train(self, train_data, max_iter=np.inf, max_epochs=np.inf, outdir='./out'):
     saver = tf.train.Saver(tf.all_variables())
@@ -158,23 +139,14 @@ class Model(object):
 
       while True:
         x, x_annot, one_epoch_completed = train_data.get_next_batch()
-        ncrp_prior_batch = []
-        for (vidid, frameid) in x_annot:
-          try:
-            ncrp_prior_vid = ncrp_prior[vidid]
-          except:
-            ncrp_prior_vid = np.ones(NUM_PATHS)
-            ncrp_prior_vid = ncrp_prior_vid / np.sum(ncrp_prior_vid)
-          ncrp_prior_batch.append(ncrp_prior_vid)
-        feed_dict = {self.x_in: x, self.ncrp_prior: ncrp_prior_batch}
-        fetches = [self.x_reconstructed, self.theta_normalized, self.rec_cost_mean,
-                  self.kl_cost_mean, self.cost, self.global_step, self.train_op, 
-                  self.embedding]
+        feed_dict = {self.x_in: x, 
+                     self.ncrp_prior: Model.compute_ncrp_prior_batch(x_annot, ncrp_prior)}
+        fetches = [self.x_reconstructed, self.path_prob, self.rec_cost_mean,
+                  self.kl_cost_mean, self.cost, self.global_step, self.train_op]
 
-        (x_reconstructed, theta_normalized, rec_cost_mean, kl_cost_mean, cost,
-         iteration, _, embedding) = self.session.run(fetches, feed_dict)
+        (x_reconstructed, path_prob, rec_cost_mean, kl_cost_mean, cost,
+         iteration, _) = self.session.run(fetches, feed_dict)
 
-        z = np.argmax(theta_normalized, 1)
 
         if iteration%1000 == 0:
           # write model
@@ -183,17 +155,9 @@ class Model(object):
           Model.write_z(self.path_assignments, os.path.join(self.output_dir,
                         'assignments'+unicode(iteration)+'.txt'))
 
-        for i in xrange(len(z)):
-          (vidid, frameid) = x_annot[i]
-          try: 
-            vid_path_assignments = self.path_assignments[vidid]
-          except:
-            vid_path_assignments = {}
-          
-          vid_path_assignments[frameid] = int(z[i])
-          self.path_assignments[vidid] = vid_path_assignments
+        self.update_path_assignments(path_prob, x_annot)
 
-        if iteration%1 == 0:
+        if iteration%10 == 0:
           ncrp_prior = Model.recompute_ncrp(self.path_assignments)
 
         err_train += cost
@@ -205,9 +169,48 @@ class Model(object):
     except KeyboardInterrupt:
         now = datetime.now().isoformat()[11:]
         print '---------- Training end: {} -----------\n'.format(now)
+        # write model
+        saver.save(self.session, os.path.join(self.output_dir, 'model'), 
+                   global_step = iteration)
+        Model.write_z(self.path_assignments, os.path.join(self.output_dir,
+                      'assignments'+unicode(iteration)+'.txt'))
         sys.exit(0)
 
+
+  def sampleGaussian(self, mu, log_sigma):
+    # (Differentiably!) draw sample from Gaussian with given shape, 
+    # subject to random noise epsilon
+    with tf.name_scope("sample_gaussian"):
+      # reparameterization trick
+      epsilon = tf.random_normal(tf.shape(log_sigma), name="epsilon")
+      return mu + epsilon * tf.exp(log_sigma) # N(mu, I * sigma**2)
+
+  def update_path_assignments(self, path_prob, x_annot):
+    z = np.argmax(path_prob, 1)
+    for i in xrange(len(z)):
+      (vidid, frameid) = x_annot[i]
+      try: 
+        vid_path_assignments = self.path_assignments[vidid]
+      except:
+        vid_path_assignments = {}
+          
+      vid_path_assignments[frameid] = int(z[i])
+      self.path_assignments[vidid] = vid_path_assignments
+
   @staticmethod
+  def compute_ncrp_prior_batch(x_annot, ncrp_prior):
+    ncrp_prior_batch = []
+    for (vidid, frameid) in x_annot:
+      try:
+        ncrp_prior_vid = ncrp_prior[vidid]
+      except:
+        ncrp_prior_vid = np.ones(NUM_PATHS)
+        ncrp_prior_vid = ncrp_prior_vid / np.sum(ncrp_prior_vid)
+      ncrp_prior_batch.append(ncrp_prior_vid)
+    return ncrp_prior_batch
+
+ 
+  @staticmethod 
   def normalize_prob_crp(prob):
     # replace zeros with GAMMA
     zero_indices = [i for (i, f) in enumerate(prob) if f==0]
