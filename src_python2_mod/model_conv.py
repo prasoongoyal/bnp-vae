@@ -3,6 +3,7 @@ from __future__ import with_statement
 from __future__ import absolute_import
 from datetime import datetime
 import sys
+import os
 import json
 import numpy as np
 
@@ -58,8 +59,8 @@ class Model(object):
     CONV_NUM_CHANNELS = [32, 32, 16]
     POOL_SIZES = [3, 4, 5]
 
-    final_size = (IMG_DIM['width'] / int(np.prod(POOL_SIZES)), 
-                  IMG_DIM['height'] / int(np.prod(POOL_SIZES)),
+    final_size = (int(IMG_DIM['width'] / np.prod(POOL_SIZES)), 
+                  int(IMG_DIM['height'] / np.prod(POOL_SIZES)),
                   CONV_NUM_CHANNELS[-1])
     FC_SIZES = [int(np.prod(final_size)), 16]
 
@@ -120,15 +121,6 @@ class Model(object):
     x_fc2 = tf.add(tf.matmul(x_fc1_dropout, fc_weights['layer2']), fc_biases['layer2'])
     x_fc2_dropout = tf.nn.dropout(tf.tanh(x_fc2), dropout)
 
-    print x_layer1.get_shape()
-    print x_layer2.get_shape()
-    print x_layer3.get_shape()
-    print x_flatten.get_shape()
-    print x_fc1.get_shape()
-    print x_fc1_dropout.get_shape()
-    print x_fc2.get_shape()
-    print x_fc2_dropout.get_shape()
-
     theta_normalized = tf.nn.softmax(x_fc2_dropout)
 
     # reconstruction
@@ -137,22 +129,15 @@ class Model(object):
     z_fc4 = tf.add(tf.matmul(z_fc3_dropout, fc_weights['layer4']), fc_biases['layer4'])
     z_fc4_dropout = tf.nn.dropout(tf.tanh(z_fc4), dropout)
 
-    print z_fc4_dropout.get_shape()
-
-    z_reshape = tf.reshape(z_fc4_dropout, [-1, 8, 6, 16], name='z_reshape')
-    print z_reshape.get_shape()
+    z_reshape = tf.reshape(z_fc4_dropout, [-1, final_size[0], final_size[1], final_size[2]], 
+                           name='z_reshape')
     z_layer1 =Layers.conv_unpool(z_reshape, dec_conv_filters['layer1'], 
-                                dec_conv_biases['layer1'], 3, POOL_SIZES[2])
-    print z_layer1.get_shape()
+                                dec_conv_biases['layer1'], CONV_FILTER_SIZES[2], POOL_SIZES[2])
     z_layer2 = Layers.conv_unpool(z_layer1, dec_conv_filters['layer2'], 
-                                dec_conv_biases['layer2'], 5, POOL_SIZES[1])
-    print z_layer2.get_shape()
+                                dec_conv_biases['layer2'], CONV_FILTER_SIZES[1], POOL_SIZES[1])
     x_reconstructed = tf.sigmoid(Layers.conv_unpool(z_layer2, dec_conv_filters['layer3'], 
-                                dec_conv_biases['layer3'], 5, POOL_SIZES[0]))
+                                dec_conv_biases['layer3'], CONV_FILTER_SIZES[0], POOL_SIZES[0]))
     
-    print x_reconstructed.get_shape()
-
-
     rec_loss = Model.l2_loss(x_reconstructed, x_in)
     kl_loss = Model.kl_loss(theta_normalized, ncrp_prior)
 
@@ -163,7 +148,7 @@ class Model(object):
       kl_cost_mean = tf.reduce_mean(kl_loss)
 
     with tf.name_scope('cost'):
-      cost = tf.reduce_mean(rec_loss + 0.0 * kl_loss, name='vae_cost')
+      cost = tf.reduce_mean(rec_loss + kl_loss, name='vae_cost')
 
     # optimization
     global_step = tf.Variable(0, trainable=False)
@@ -204,48 +189,17 @@ class Model(object):
                   self.kl_cost_mean, self.cost, self.global_step, self.train_op, 
                   self.embedding]
 
-        #run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        #run_metadata = tf.RunMetadata()
         (x_reconstructed, theta_normalized, rec_cost_mean, kl_cost_mean, cost,
-                  iteration, _, embedding) = self.session.run(fetches,
-                          feed_dict)
+         iteration, _, embedding) = self.session.run(fetches, feed_dict)
 
-        '''
-        tl = timeline.Timeline(run_metadata.step_stats)
-        ctf = tl.generate_chrome_trace_format()
-        with tf.gfile.Open('timeline_' + str(iteration) + '.json', 'w') as f:
-          f.write(ctf)
-        '''
-
-        #print (np.shape(x))
-        #print (np.shape(x_reconstructed))
         z = np.argmax(theta_normalized, 1)
 
         if iteration%1000 == 0:
-          # write x and x_reconstructed to file
-          with open(self.output_dir+'data_nokl56_'+unicode(iteration)+'.txt', 'w') as f:
-            for i in xrange(np.size(x, 0)):
-              f.write('Sample ' + unicode(i) + '\n')
-              for j in xrange(np.size(x,1)):
-                f.write(unicode(np.round(x[i][j], decimals=2)) + '\t' + 
-                        unicode(np.round(x_reconstructed[i][j], decimals=2)) + '\t' + 
-                        unicode(np.round(np.absolute(x[i][j] - x_reconstructed[i][j]), 
-                            decimals=2)) + '\n')
-
-        #print np.shape(embedding)
-
-        if iteration%1000 == 1:
-          # write embeddings to file
-          with open(self.output_dir+'embedding_nokl56_'+unicode(iteration)+'.txt', 'w') as f:
-            for i in xrange(np.size(embedding, 0)):
-              for j in xrange(np.size(embedding, 1)):
-                f.write(unicode(np.round(embedding[i][j], decimals=2)) + '\t')
-              f.write(unicode('\n'))
-
-        if iteration%1000 == 0:
           # write model
-          saver.save(self.session, self.output_dir+'model56_nokl56.model', global_step =
-                  iteration)
+          saver.save(self.session, os.path.join(self.output_dir, 'model'), 
+                     global_step = iteration)
+          Model.write_z(self.path_assignments, os.path.join(self.output_dir,
+                        'assignments'+unicode(iteration)+'.txt'))
 
         for i in xrange(len(z)):
           (vidid, frameid) = x_annot[i]
@@ -260,12 +214,11 @@ class Model(object):
         if iteration%1 == 0:
           ncrp_prior = Model.recompute_ncrp(self.path_assignments)
 
-        #print (self.path_assignments)
-        if iteration%1000 == 0:
-          Model.write_z(self.path_assignments, self.output_dir+'assignments_nokl56_'+unicode(iteration)+'.txt')
         err_train += cost
-        print iteration, rec_cost_mean, kl_cost_mean, cost
-        #print (np.shape(theta_normalized))
+        print (('Iter : %d \t ' +
+                'Rec. loss : %f \t' +
+                'KL-div loss : %f \t' +
+                'Total loss : %f') % (iteration, rec_cost_mean, kl_cost_mean, cost))
 
     except KeyboardInterrupt:
         now = datetime.now().isoformat()[11:]
@@ -287,15 +240,11 @@ class Model(object):
       return prob
     else:
       prob_norm = list(imap(lambda x: x/s, prob))
-      #print (prob, prob_norm)
       return prob_norm
 
   @staticmethod
   def compute_ncrp_prior(path_freq):
-    #print ('compute ncrp', path_freq)
     if len(path_freq) == BRANCHING_FACTOR:
-      #s = float(sum(path_freq))
-      #return map(lambda x: x/s, path_freq)
       return Model.normalize_prob_crp(path_freq)
     else:
       # create higher level frequencies
@@ -304,7 +253,6 @@ class Model(object):
         parent_freq.append(sum(path_freq[i*BRANCHING_FACTOR:(i+1)*BRANCHING_FACTOR]))
       # compute probabilities for parents recursively
       parent_prob = Model.compute_ncrp_prior(parent_freq)
-      #print (parent_freq, parent_prob)
         
       # compute probabilities for current level
       prob = []
@@ -322,7 +270,6 @@ class Model(object):
       for frameid in path_assignments[vidid]:
         path_freq[int(path_assignments[vidid][frameid])] += 1
       ncrp_priors[vidid] = Model.compute_ncrp_prior(path_freq)
-      #print (vidid, path_freq, ncrp_priors[vidid])
     return ncrp_priors
         
   @staticmethod
@@ -346,7 +293,6 @@ class Model(object):
       ncrp_prior_ = tf.clip_by_value(ncrp_prior, offset, 1-offset)
       log_theta_normalized = tf.log(theta_normalized_, name='log_theta_normalized')
       log_ncrp_prior = tf.log(ncrp_prior_, name='log_ncrp_prior')
-      #log_diff = tf.subtract(log_ncrp_prior, log_theta_normalized, name='log_diff')
       log_diff = tf.subtract(log_theta_normalized, log_ncrp_prior, name='log_diff')
       return tf.reduce_sum(tf.multiply(theta_normalized_, log_diff), 1)
     
