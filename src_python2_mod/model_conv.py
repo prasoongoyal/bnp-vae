@@ -56,41 +56,13 @@ class Model(object):
     dropout = tf.placeholder_with_default(1.0, shape=[], name='dropout')
 
     CONV_FILTER_SIZES = [5, 5, 3]
-    CONV_NUM_CHANNELS = [32, 32, 16]
+    CONV_NUM_CHANNELS = [IMG_DIM['channels'], 32, 32, 16]
     POOL_SIZES = [3, 4, 5]
 
     final_size = (int(IMG_DIM['width'] / np.prod(POOL_SIZES)), 
                   int(IMG_DIM['height'] / np.prod(POOL_SIZES)),
                   CONV_NUM_CHANNELS[-1])
     FC_SIZES = [int(np.prod(final_size)), 16]
-
-    enc_conv_filters = {
-      'layer1': tf.Variable(tf.random_normal([CONV_FILTER_SIZES[0], CONV_FILTER_SIZES[0], 
-                                              IMG_DIM['channels'], CONV_NUM_CHANNELS[0]])),
-      'layer2': tf.Variable(tf.random_normal([CONV_FILTER_SIZES[1], CONV_FILTER_SIZES[1], 
-                                              CONV_NUM_CHANNELS[0], CONV_NUM_CHANNELS[1]])),
-      'layer3': tf.Variable(tf.random_normal([CONV_FILTER_SIZES[2], CONV_FILTER_SIZES[2], 
-                                              CONV_NUM_CHANNELS[1], CONV_NUM_CHANNELS[2]])),
-    }
-    enc_conv_biases = {
-      'layer1': tf.Variable(tf.random_normal([CONV_NUM_CHANNELS[0]])),
-      'layer2': tf.Variable(tf.random_normal([CONV_NUM_CHANNELS[1]])),
-      'layer3': tf.Variable(tf.random_normal([CONV_NUM_CHANNELS[2]])),
-    }
-
-    dec_conv_filters = {
-      'layer1': tf.Variable(tf.random_normal([CONV_FILTER_SIZES[2], CONV_FILTER_SIZES[2], 
-                                              CONV_NUM_CHANNELS[2], CONV_NUM_CHANNELS[1]])),
-      'layer2': tf.Variable(tf.random_normal([CONV_FILTER_SIZES[1], CONV_FILTER_SIZES[1], 
-                                              CONV_NUM_CHANNELS[1], CONV_NUM_CHANNELS[0]])),
-      'layer3': tf.Variable(tf.random_normal([CONV_FILTER_SIZES[0], CONV_FILTER_SIZES[0], 
-                                              CONV_NUM_CHANNELS[0], IMG_DIM['channels']])),
-    }
-    dec_conv_biases = {
-      'layer1': tf.Variable(tf.random_normal([CONV_NUM_CHANNELS[1]])),
-      'layer2': tf.Variable(tf.random_normal([CONV_NUM_CHANNELS[0]])),
-      'layer3': tf.Variable(tf.random_normal([IMG_DIM['channels']])),
-    }
 
     fc_weights = {
       'layer1': tf.Variable(tf.random_normal([FC_SIZES[0], FC_SIZES[1]])),
@@ -107,12 +79,10 @@ class Model(object):
 
     embedding =  tf.Variable(tf.random_normal(([NUM_PATHS, 10])))
 
-    x_layer1 = Layers.conv_pool(x_in, enc_conv_filters['layer1'], 
-                                enc_conv_biases['layer1'], CONV_FILTER_SIZES[0], POOL_SIZES[0])
-    x_layer2 = Layers.conv_pool(x_layer1, enc_conv_filters['layer2'], 
-                                enc_conv_biases['layer2'], CONV_FILTER_SIZES[1], POOL_SIZES[1])
-    x_layer3 = Layers.conv_pool(x_layer2, enc_conv_filters['layer3'], 
-                                enc_conv_biases['layer3'], CONV_FILTER_SIZES[2], POOL_SIZES[2])
+    encoder_layers = [ConvPool("encoder_conv_pool", conv_kernel_size, conv_output_channels,
+                      pool_size, tf.tanh) for (conv_kernel_size, conv_output_channels, 
+                      pool_size) in zip(CONV_FILTER_SIZES, CONV_NUM_CHANNELS[1:], POOL_SIZES)]
+    x_layer3 = composeAll(reversed(encoder_layers))(x_in)
 
     x_flatten = tf.reshape(x_layer3, [-1, int(np.prod(final_size))], name='x_flatten')
 
@@ -131,13 +101,13 @@ class Model(object):
 
     z_reshape = tf.reshape(z_fc4_dropout, [-1, final_size[0], final_size[1], final_size[2]], 
                            name='z_reshape')
-    z_layer1 =Layers.conv_unpool(z_reshape, dec_conv_filters['layer1'], 
-                                dec_conv_biases['layer1'], CONV_FILTER_SIZES[2], POOL_SIZES[2])
-    z_layer2 = Layers.conv_unpool(z_layer1, dec_conv_filters['layer2'], 
-                                dec_conv_biases['layer2'], CONV_FILTER_SIZES[1], POOL_SIZES[1])
-    x_reconstructed = tf.sigmoid(Layers.conv_unpool(z_layer2, dec_conv_filters['layer3'], 
-                                dec_conv_biases['layer3'], CONV_FILTER_SIZES[0], POOL_SIZES[0]))
-    
+
+    decoder_layers = [DeconvUnpool("decoder_deconv_unpool", deconv_kernel_size, 
+                      deconv_output_channels, unpool_size, tf.tanh) for (deconv_kernel_size,
+                      deconv_output_channels, unpool_size) in zip(CONV_FILTER_SIZES,
+                      CONV_NUM_CHANNELS[:-1], POOL_SIZES)]
+    x_reconstructed = tf.sigmoid(composeAll(decoder_layers)(z_reshape))
+
     rec_loss = Model.l2_loss(x_reconstructed, x_in)
     kl_loss = Model.kl_loss(theta_normalized, ncrp_prior)
 
