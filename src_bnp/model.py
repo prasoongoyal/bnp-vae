@@ -205,9 +205,12 @@ class Model(object):
         sys.exit(0)
 
   def update_variational_parameters(self, var_alpha, var_log_sigma, var_gamma, var_phi):
-    print 'Performing variational inference...'
+    print 'Performing variational inference...',
     var_sigma = np.exp(var_log_sigma)
+    iteration = 0
     while True:
+      iteration += 1
+      #raw_input()
       #old_var_alpha, old_var_sigma, old_var_gamma, old_var_phi = var_alpha, \
       #    var_sigma, var_gamma, var_phi
       old_var_alpha = deepcopy(var_alpha)
@@ -231,11 +234,11 @@ class Model(object):
             sum_phi[i] += phi_mn[i]
       for i in range(NUM_PATHS):
         var_alpha[i] = (self.ALPHA[i] + sum_phi_z[i]) / (1.0 + sum_phi[i])
-      print 'alpha updated'
+      #print 'alpha updated'
       # compute sigma
       for i in range(NUM_PATHS):
         var_sigma[i] = self.SIGMA_B / np.sqrt(1.0 + sum_phi[i])
-      print 'sigma updated'
+      #print 'sigma updated'
       # compute gamma
       for vidid in self.latent_codes:
         try:
@@ -254,15 +257,18 @@ class Model(object):
             for j in edges_before_path:
               gamma_m[j][1] += phi_mn[i]
         var_gamma[vidid] = gamma_m
-      print 'gamma computed'
+      #print 'gamma computed'
       # compute phi
       for vidid in self.latent_codes:
         for frameid in self.latent_codes[vidid]:
           z_mn = self.latent_codes[vidid][frameid]
           phi_mn = NUM_PATHS * [1.0 / NUM_PATHS]
+          #print 'before loop : ', np.shape(phi_mn)
           for i in range(NUM_PATHS):
+            #print i, np.shape(phi_mn)
             phi_mn[i] = -1.0 / (2.0 * self.SIGMA_Z**2) * \
-                        (np.linalg.norm(z_mn - var_alpha[i]) + var_sigma[i]**2)
+                        (np.linalg.norm(z_mn - var_alpha[i]) + np.linalg.norm(var_sigma[i]))
+            #print 'phi_mn_i : ', phi_mn[i]
             edges_on_path = Model.get_edges_on_path(i)
             edges_before_path = Model.get_edges_before_path(i)
             for j in edges_on_path:
@@ -271,12 +277,25 @@ class Model(object):
             for j in edges_before_path:
               phi_mn[i] +=  digamma(var_gamma[vidid][j][1]) - \
                             digamma(var_gamma[vidid][j][0] + var_gamma[vidid][j][1])
-      print 'phi computed'
+            #print 'phi_mn_i : ', phi_mn[i]
+          #print 'after loop : ', np.shape(phi_mn)
+          try:
+            _ = var_phi[vidid]
+          except KeyError:
+            var_phi[vidid] = {}
+          #print vidid, frameid, np.shape(phi_mn)
+          var_phi[vidid][frameid] = Model.normalize(np.exp(phi_mn))
+      #print 'phi computed'
       alpha_diff = np.linalg.norm(var_alpha - old_var_alpha)
       sigma_diff = np.linalg.norm(var_sigma - old_var_sigma)
       # print alpha_diff, sigma_diff
+      #print 'alphas : ', var_alpha, old_var_alpha
+      #print 'sigmas : ', var_sigma, old_var_sigma
+      #print 'gammas : ', var_gamma, old_var_gamma
+      #print 'phis : ', var_phi, old_var_phi
       if (alpha_diff + sigma_diff < 1E-7):
         break
+    print 'completed in ' + str(iteration) + ' iterations'
     return var_alpha, np.log(var_sigma), var_gamma, var_phi
 
   @staticmethod
@@ -329,6 +348,15 @@ class Model(object):
           
       vid_path_assignments[frameid] = int(z[i])
       self.path_assignments[vidid] = vid_path_assignments
+
+  @staticmethod
+  def normalize(p):
+    #print 'normalize : ', np.shape(p)
+    #print np.shape(p)
+    p = np.asarray(p)
+    s = np.sum(p)
+    #print np.shape(p/s)
+    return p/s
 
   @staticmethod
   def get_true_path_mean(x_annot_batch, alpha, log_sigma, gamma, phi):
