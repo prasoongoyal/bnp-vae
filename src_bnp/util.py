@@ -5,7 +5,7 @@ import sys
 import functools
 from functional import partial, compose
 
-batch_size = 2
+batch_size = 32
 IMG_DIM = {'width': 480, 'height': 360, 'channels': 3}
 #GAMMA = 1.0   # for ncrp
 BRANCHING_FACTOR = 3
@@ -13,6 +13,8 @@ NUM_LEVELS = 4
 NUM_INTERNAL_EDGES = BRANCHING_FACTOR * ((BRANCHING_FACTOR ** (NUM_LEVELS-2) - 1) /
                                          (BRANCHING_FACTOR - 1))
 NUM_PATHS = BRANCHING_FACTOR ** (NUM_LEVELS - 1)
+NUM_NODES = (BRANCHING_FACTOR ** NUM_LEVELS - 1) / (BRANCHING_FACTOR - 1)
+NUM_INTERNAL_NODES = NUM_NODES - NUM_PATHS
 NUM_EDGES = BRANCHING_FACTOR * ((BRANCHING_FACTOR ** (NUM_LEVELS-1) - 1) / 
                                 (BRANCHING_FACTOR - 1))
 
