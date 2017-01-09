@@ -16,7 +16,7 @@ from itertools import imap
 
 #DEFAULT_ARCH = [np.prod(IMG_DIM), 1024, 1024, NUM_PATHS]
 DEFAULT_LEARNING_RATE = 1E-3
-LATENT_CODE_SIZE = 10
+LATENT_CODE_SIZE = 100
 
 class Model(object):
   # TODO: Add arguments for architecture, learning rate, etc.
@@ -128,7 +128,7 @@ class Model(object):
 
     # ncrp hyperparameters
     self.ALPHA = np.zeros(shape=LATENT_CODE_SIZE)
-    self.GAMMA = 1.0
+    self.GAMMA = 10.0
     self.SIGMA_B = 1.0
     self.SIGMA_Z = 1.0
     self.SIGMA_B_sqrinv = 1.0 / (self.SIGMA_B ** 2)
@@ -177,11 +177,13 @@ class Model(object):
           #              'assignments'+unicode(iteration)+'.txt'))
 
         # update variational parameters periodically
-        if iteration%10 == 0:
-          Model.write_assignments(var_phi, os.path.join(self.output_dir, 
-                                           'phi_'+unicode(iteration)+'.json'))
+        if iteration%1000 == 0:
           var_alpha, var_sigmasqr_inv, var_gamma, var_phi = self.update_variational_parameters(
               var_alpha, var_sigmasqr_inv, var_gamma, var_phi)
+          Model.write_gamma(var_gamma, os.path.join(self.output_dir, 
+                                           'gamma_'+unicode(iteration)+'.json'))
+          Model.write_assignments(var_phi, os.path.join(self.output_dir, 
+                                           'phi_'+unicode(iteration)+'.json'))
 
         err_train += cost
         print (('Iter : %d \t ' +
@@ -200,6 +202,12 @@ class Model(object):
         sys.exit(0)
 
   @staticmethod
+  def write_gamma(gamma, filename):
+    with open(filename, 'w') as f:
+      for vidid in gamma:
+        f.write(vidid + '\t' + unicode(gamma[vidid]) + '\n')
+
+  @staticmethod
   def write_assignments(phi, filename):
     with open(filename, 'w') as f:
       for vidid in phi:
@@ -216,23 +224,26 @@ class Model(object):
         try:
           phi_mn = var_phi[vidid][frameid]
         except KeyError:
-          phi_mn = NUM_PATHS * [1.0 / NUM_PATHS]
+          #phi_mn = NUM_PATHS * [1.0 / NUM_PATHS]
+          phi_mn = np.random.rand(NUM_PATHS)
+          phi_mn = phi_mn / np.sum(phi_mn)
         for i in range(NUM_PATHS):
           sum_phi_z[i] += phi_mn[i] * z_mn
           sum_phi[i] += phi_mn[i]
     return sum_phi_z, sum_phi
 
-  def compute_alpha_sigma(self, var_alpha, var_sigmasqr_inv):
+  def compute_alpha_sigma(self, var_alpha, var_sigmasqr_inv, var_phi):
     # compute sums required
     sum_phi_z, sum_phi = self.compute_sums(var_phi)
-    for i in reversed(range(NUM_PATHS)):
+    for i in reversed(range(NUM_NODES)):
       if i >= NUM_INTERNAL_NODES:
         # leaf node
         parent_i = Model.get_parent(i)
         var_sigmasqr_inv[i] = var_sigmasqr_inv[parent_i] +  \
                               sum_phi[i - NUM_INTERNAL_NODES] * self.SIGMA_Z_sqrinv
         var_alpha[i] = (var_sigmasqr_inv[parent_i] * var_alpha[parent_i] + 
-                        sum_phi_z[i] * self.SIGMA_Z_sqrinv) / var_sigmasqr_inv[i]
+                        sum_phi_z[i- NUM_INTERNAL_NODES] * self.SIGMA_Z_sqrinv) \
+                        / var_sigmasqr_inv[i]
       else:
         # internal node
         parent_i = Model.get_parent(i)
@@ -248,7 +259,7 @@ class Model(object):
     return var_alpha, var_sigmasqr_inv
 
   def compute_gamma(self, var_phi, edges_on_path, edges_before_path):
-    # compute gamma
+    var_gamma = {}
     for vidid in self.latent_codes:
       try:
         latent_codes_vidid = self.latent_codes[vidid]
@@ -259,7 +270,9 @@ class Model(object):
         try:
           phi_mn = var_phi[vidid][frameid]
         except KeyError:
-          phi_mn = NUM_PATHS * [1.0 / NUM_PATHS]
+          #phi_mn = NUM_PATHS * [1.0 / NUM_PATHS]
+          phi_mn = np.random.rand(NUM_PATHS)
+          phi_mn = phi_mn / np.sum(phi_mn)
         for i in range(NUM_PATHS):
           for j in edges_on_path[i]:
             gamma_m[j][0] += phi_mn[i]
@@ -270,6 +283,7 @@ class Model(object):
   
   def compute_phi(self, var_gamma, edges_on_path, edges_before_path, var_alpha, 
                   var_sigmasqr_inv):
+    var_phi = {}
     for vidid in self.latent_codes:
       phi_m = NUM_PATHS * [0.0]
       for i in range(NUM_PATHS):
@@ -279,11 +293,16 @@ class Model(object):
         for j in edges_before_path[i]:
           phi_m[i] +=  digamma(var_gamma[vidid][j][1]) - \
                        digamma(var_gamma[vidid][j][0] + var_gamma[vidid][j][1])
+      #print vidid, np.round(phi_m, 2)
+      #raw_input()
       for frameid in self.latent_codes[vidid]:
         z_mn = self.latent_codes[vidid][frameid]
         phi_mn = deepcopy(phi_m)
         norm_z_minus_alpha = np.linalg.norm(z_mn - var_alpha[NUM_INTERNAL_NODES:], axis=1)
         norm_sigma = np.sum(1.0 / var_sigmasqr_inv[NUM_INTERNAL_NODES:], axis=1)
+        #print norm_z_minus_alpha
+        #print norm_sigma
+        #raw_input()
         phi_mn += -1.0 / (2.0 * self.SIGMA_Z**2) * (norm_z_minus_alpha + norm_sigma)
         try:
           _ = var_phi[vidid]
@@ -307,7 +326,8 @@ class Model(object):
       old_var_sigmasqr_inv = deepcopy(var_sigmasqr_inv)
 
       # compute new values
-      var_alpha, var_sigmasqr_inv = self.compute_alpha_sigma(var_alpha, var_sigmasqr_inv)
+      var_alpha, var_sigmasqr_inv = self.compute_alpha_sigma(var_alpha, 
+                                    var_sigmasqr_inv, var_phi)
       var_gamma = self.compute_gamma(var_phi, edges_on_path, edges_before_path)
       var_phi = self.compute_phi(var_gamma, edges_on_path, edges_before_path, var_alpha,
                                  var_sigmasqr_inv)
@@ -388,7 +408,10 @@ class Model(object):
     p = np.asarray(p)
     s = np.sum(p)
     #print np.shape(p/s)
-    return p/s
+    if s > 1E-7:
+      return p/s
+    else:
+      return Model.normalize(np.ones(shape=np.shape(p)))
 
   @staticmethod
   def get_true_path_mean(x_annot_batch, alpha, sigmasqr_inv, gamma, phi):
