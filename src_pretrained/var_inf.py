@@ -34,12 +34,11 @@ class VarInf(object):
 
   def update_variational_parameters(self, latent_codes):
     print 'Performing variational inference...'
-    for iteration in range(10)
+    for iteration in range(10):
       self.compute_sigma(latent_codes)
       self.compute_alpha(latent_codes)
       self.compute_gamma(latent_codes)
       self.compute_phi(latent_codes)
-    print 'completed in ' + str(iteration) + ' iterations'
    
   def compute_sums(self, latent_codes):
     sum_phi_z = NUM_PATHS * [0.0]
