@@ -22,4 +22,5 @@ if __name__ == u"__main__":
 
   files_list = sys.argv[1]
   output_dir = sys.argv[2]
+
   main(files_list, output_dir)

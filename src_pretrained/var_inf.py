@@ -1,6 +1,7 @@
 from util import *
 from copy import deepcopy
 from scipy.special import digamma
+from datetime import datetime
 
 class VarInf(object):
   def __init__(self):
@@ -35,8 +36,9 @@ class VarInf(object):
   def update_variational_parameters(self, latent_codes):
     print 'Performing variational inference...'
     for iteration in range(10):
-      self.compute_sigma(latent_codes)
-      self.compute_alpha(latent_codes)
+      sum_phi_z, sum_phi = self.compute_sums(latent_codes)
+      self.compute_sigma(sum_phi_z, sum_phi)
+      self.compute_alpha(sum_phi_z, sum_phi)
       self.compute_gamma(latent_codes)
       self.compute_phi(latent_codes)
    
@@ -58,9 +60,7 @@ class VarInf(object):
           sum_phi[i] += phi_mn[i]
     return sum_phi_z, sum_phi
 
-  def compute_alpha(self, latent_codes):
-    # compute sums required
-    sum_phi_z, sum_phi = self.compute_sums(latent_codes)
+  def compute_alpha(self, sum_phi_z, sum_phi):
     for i in reversed(range(NUM_NODES)):
       if i >= NUM_INTERNAL_NODES:
         # leaf node
@@ -77,9 +77,7 @@ class VarInf(object):
           self.alpha[i] += self.alpha[c]
         self.alpha[i] /= (1.0 + BRANCHING_FACTOR)
 
-  def compute_sigma(self, latent_codes):
-    # compute sums required
-    sum_phi_z, sum_phi = self.compute_sums(latent_codes)
+  def compute_sigma(self, sum_phi_z, sum_phi):
     for i in reversed(range(NUM_NODES)):
       if i >= NUM_INTERNAL_NODES:
         # leaf node
@@ -108,6 +106,7 @@ class VarInf(object):
       self.gamma[vidid] = gamma_m
 
   def compute_phi(self, latent_codes):
+    norm_sigma = np.sum(1.0 / self.sigmasqr_inv[NUM_INTERNAL_NODES:], axis=1)
     for vidid in latent_codes:
       phi_m = NUM_PATHS * [0.0]
       try:
@@ -123,10 +122,8 @@ class VarInf(object):
                        digamma(gamma_m[j][0] + gamma_m[j][1])
       for frameid in latent_codes[vidid]:
         z_mn = latent_codes[vidid][frameid]
-        phi_mn = deepcopy(phi_m)
         norm_z_minus_alpha = np.linalg.norm(z_mn - self.alpha[NUM_INTERNAL_NODES:], axis=1)
-        norm_sigma = np.sum(1.0 / self.sigmasqr_inv[NUM_INTERNAL_NODES:], axis=1)
-        phi_mn += -1.0 / (2.0 * SIGMA_Z**2) * (norm_z_minus_alpha + norm_sigma)
+        phi_mn = phi_m - 1.0 / (2.0 * SIGMA_Z**2) * (norm_z_minus_alpha + norm_sigma)
         try:
           _ = self.phi[vidid]
         except KeyError:
@@ -174,11 +171,13 @@ class VarInf(object):
       for vidid in self.gamma:
         f.write(vidid + '\t' + unicode(self.gamma[vidid]) + '\n')
 
-  def write_assignments(self,filename):
+  def write_assignments(self, filename):
     with open(filename, 'w') as f:
       for vidid in self.phi:
         for frameid in self.phi[vidid]:
           f.write(vidid + '\t' + frameid + '\t' + \
                   unicode(np.argmax(self.phi[vidid][frameid])) + '\n')
 
- 
+  def write_alpha(self, filename):
+    np.savetxt(filename, self.alpha)
+      

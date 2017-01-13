@@ -98,7 +98,7 @@ class Model(object):
                       deconv_output_channels, unpool_size, tf.tanh) for (deconv_kernel_size,
                       deconv_output_channels, unpool_size) in zip(CONV_FILTER_SIZES,
                       CONV_NUM_CHANNELS[:-1], POOL_SIZES)]
-    x_reconstructed = tf.sigmoid(composeAll(dec_conv_layers)(z_reshape))
+    x_reconstructed = tf.tanh(composeAll(dec_conv_layers)(z_reshape))
 
     rec_loss = Model.l2_loss(x_reconstructed, x_in)
     kl_loss = Model.kl_loss(z_mean, z_log_sigma, mu_in, log_sigma_in)
@@ -135,6 +135,7 @@ class Model(object):
 
     try:
       err_train = 0
+      training_start_time = datetime.now()
       now = datetime.now().isoformat()[11:]
 
       print '------------ Training begin: {} -----------\n'.format(now)
@@ -159,20 +160,15 @@ class Model(object):
 
         self.update_latent_codes(z, x_annot)
 
-        # write model periodically
-        if iteration%1000 == 0:
+        # update variational parameters periodically and save current state
+        if iteration%10000 == 0:
           saver.save(self.session, os.path.join(self.output_dir, 'model'), 
                      global_step = iteration)
-          #Model.write_z(self.path_assignments, os.path.join(self.output_dir,
-          #              'assignments'+unicode(iteration)+'.txt'))
-
-        # update variational parameters periodically
-        if iteration%100 == 0:
+          self.write_latent_codes(os.path.join(self.output_dir, 
+                                               'z_'+unicode(iteration)+'.txt'))
           var_inf.update_variational_parameters(self.latent_codes)
-          var_inf.write_gamma(os.path.join(self.output_dir, 
-                                           'gamma_'+unicode(iteration)+'.json'))
-          var_inf.write_assignments(os.path.join(self.output_dir, 
-                                           'phi_'+unicode(iteration)+'.json'))
+          var_inf.write_alpha(os.path.join(self.output_dir, 
+                                           'alpha_'+unicode(iteration)+'.txt'))
 
         err_train += cost
         print (('Iter : %d \t ' +
@@ -186,21 +182,17 @@ class Model(object):
         # write model
         saver.save(self.session, os.path.join(self.output_dir, 'model'), 
                    global_step = iteration)
-        Model.write_z(self.path_assignments, os.path.join(self.output_dir,
-                      'assignments'+unicode(iteration)+'.txt'))
         sys.exit(0)
 
   def update_latent_codes(self, z_batch, x_annot_batch):
     for (z, x_annot) in zip(z_batch, x_annot_batch):
       (vidid, frameid) = x_annot
-      #print vidid, frameid
       try:
         latent_codes_vid = self.latent_codes[vidid]
       except KeyError:
         latent_codes_vid = {}
       latent_codes_vid[frameid] = z
       self.latent_codes[vidid] = latent_codes_vid
-    #print self.latent_codes
 
   def sampleGaussian(self, mu, log_sigma):
     # (Differentiably!) draw sample from Gaussian with given shape, 
@@ -210,104 +202,17 @@ class Model(object):
       epsilon = tf.random_normal(tf.shape(log_sigma), name="epsilon")
       return mu + epsilon * tf.exp(log_sigma) # N(mu, I * sigma**2)
 
-  def update_path_assignments(self, path_prob, x_annot):
-    z = np.argmax(path_prob, 1)
-    for i in xrange(len(z)):
-      (vidid, frameid) = x_annot[i]
-      try:
-        vid_path_assignments = self.path_assignments[vidid]
-      except:
-        vid_path_assignments = {}
-
-      vid_path_assignments[frameid] = int(z[i])
-      self.path_assignments[vidid] = vid_path_assignments
-
-  @staticmethod
-  def compute_ncrp_prior_batch(x_annot, ncrp_prior):
-    ncrp_prior_batch = []
-    for (vidid, frameid) in x_annot:
-      try:
-        ncrp_prior_vid = ncrp_prior[vidid]
-      except:
-        ncrp_prior_vid = np.ones(NUM_PATHS)
-        ncrp_prior_vid = ncrp_prior_vid / np.sum(ncrp_prior_vid)
-      ncrp_prior_batch.append(ncrp_prior_vid)
-    return ncrp_prior_batch
-
- 
-  @staticmethod 
-  def normalize_prob_crp(prob):
-    # replace zeros with GAMMA
-    zero_indices = [i for (i, f) in enumerate(prob) if f==0]
-    try:
-      default_prob = GAMMA / len(zero_indices)
-      prob = list(imap(lambda x:default_prob if x==0 else x, prob))
-    except:
-      pass
-    #normalize
-    s = float(sum(prob))
-    if s==0:
-      return prob
-    else:
-      prob_norm = list(imap(lambda x: x/s, prob))
-      return prob_norm
-
-  @staticmethod
-  def compute_ncrp_prior(path_freq):
-    if len(path_freq) == BRANCHING_FACTOR:
-      return Model.normalize_prob_crp(path_freq)
-    else:
-      # create higher level frequencies
-      parent_freq = []
-      for i in xrange(int(len(path_freq)/BRANCHING_FACTOR)):
-        parent_freq.append(sum(path_freq[i*BRANCHING_FACTOR:(i+1)*BRANCHING_FACTOR]))
-      # compute probabilities for parents recursively
-      parent_prob = Model.compute_ncrp_prior(parent_freq)
-        
-      # compute probabilities for current level
-      prob = []
-      for i in xrange(len(parent_freq)):
-        prob += imap(lambda x: parent_prob[i] * x,
-                Model.normalize_prob_crp(path_freq[i*BRANCHING_FACTOR:
-                                          (i+1)*BRANCHING_FACTOR]))
-      return prob  
-
-  @staticmethod
-  def recompute_ncrp(path_assignments):
-    ncrp_priors = {}
-    for vidid in path_assignments:
-      path_freq = [0] * NUM_PATHS
-      for frameid in path_assignments[vidid]:
-        path_freq[int(path_assignments[vidid][frameid])] += 1
-      ncrp_priors[vidid] = Model.compute_ncrp_prior(path_freq)
-    return ncrp_priors
-        
-  @staticmethod
-  def write_z(z, filename):
-    fileptr = open(filename, 'w')
-    for vidid in xrange(500):
-      try:
-        vid_assignments = z[unicode(vidid)]
-      except:
-        vid_assignments = {}
-      if len(vid_assignments) > 0:
-        fileptr.write(unicode(vidid) + '\t' + 
-                      ' '.join(imap(unicode, vid_assignments.values())) + '\n')
-    fileptr.close()
+  def write_latent_codes(self, filename):
+    with open(filename, 'w') as f:
+      for vidid in self.latent_codes:
+        for frameid in self.latent_codes[vidid]:
+          f.write(vidid + '\t' + frameid + '\t' + ' '.join(map(str, \
+                         self.latent_codes[vidid][frameid])) + '\n')
 
   @staticmethod
   def kl_loss(mu_pred, log_sigma_pred, mu_in, log_sigma_in):
     # offset = 1e-7
     with tf.name_scope('kl_loss'):
-      '''
-      mu_diff = tf.subtract(mu_pred, mu_in, name='mu_diff')
-      mu_diff_norm = tf.reduce_sum(tf.square(mu_diff), axis=1)
-      sigma_norm = tf.reduce_sum(tf.square(tf.exp(log_sigma_pred)))
-      #print type(log_sigma_in)
-      #print log_sigma_in.get_shape()
-      return tf.subtract(1.0/(tf.exp(log_sigma_in) ** 2) * tf.add(mu_diff_norm, sigma_norm),
-                         2.0 * tf.reduce_sum(log_sigma_pred, axis=1))
-      '''
       kl_loss = tf.reduce_sum(tf.subtract(log_sigma_in, log_sigma_pred), axis=1)
       mu_diff_scaled = tf.div(tf.subtract(mu_in, mu_pred), tf.exp(log_sigma_in))
       kl_loss = tf.add(kl_loss, tf.reduce_sum(tf.square(mu_diff_scaled), axis=1))

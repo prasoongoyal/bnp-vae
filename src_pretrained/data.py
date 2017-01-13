@@ -29,7 +29,7 @@ class Data(object):
   
   def get_next_batch(self):
     curr_batch = self.data[self.batch_start_idx:
-                  self.batch_start_idx+self.batch_size]     #works even for last batch
+                  self.batch_start_idx+self.batch_size]     # works even for last batch
     self.batch_start_idx += self.batch_size
     if (self.batch_start_idx >= len(self.data)):
       self.batch_start_idx = 0
@@ -41,7 +41,7 @@ class Data(object):
       img = Image.open(image_info[0])
       img = img.resize((IMG_DIM['height'], IMG_DIM['width']))
       img_arr = np.asarray(img)
-      img_arr = img_arr / 255.0                             # normalize to [0,1]
+      img_arr = img_arr / 255.0 - 0.5                       # normalize to [-0.5, 0.5]
       batch.append(img_arr)
       batch_annot.append((image_info[1], image_info[2]))
 

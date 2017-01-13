@@ -6,10 +6,10 @@ import functools
 from functional import partial, compose
 
 batch_size = 4
-LATENT_CODE_SIZE = 2
+LATENT_CODE_SIZE = 100
 IMG_DIM = {'width': 240, 'height': 180, 'channels': 3}
-BRANCHING_FACTOR = 3
-NUM_LEVELS = 4
+BRANCHING_FACTOR = int(sys.argv[3])
+NUM_LEVELS = int(sys.argv[4])
 NUM_INTERNAL_EDGES = BRANCHING_FACTOR * ((BRANCHING_FACTOR ** (NUM_LEVELS-2) - 1) /
                                          (BRANCHING_FACTOR - 1))
 NUM_PATHS = BRANCHING_FACTOR ** (NUM_LEVELS - 1)
