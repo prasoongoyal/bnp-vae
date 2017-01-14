@@ -26,7 +26,7 @@ class Data(object):
     train_data = np.random.permutation(train_data)
     print u'Training on %d image files...' % len(train_data)
     return train_data
-  
+
   def get_next_batch(self):
     curr_batch = self.data[self.batch_start_idx:
                   self.batch_start_idx+self.batch_size]     # works even for last batch
@@ -37,14 +37,9 @@ class Data(object):
     # load images and preprocess
     batch = []
     batch_annot = []
-    for image_info in curr_batch:
-      img = Image.open(image_info[0])
-      img = img.resize((IMG_DIM['height'], IMG_DIM['width']))
-      img_arr = np.asarray(img)
-      img_arr = img_arr / 255.0 - 0.5                       # normalize to [-0.5, 0.5]
-      batch.append(img_arr)
-      batch_annot.append((image_info[1], image_info[2]))
-
+    image_paths = map(lambda x: x[0], curr_batch)
+    batch = np.asarray(map(np.asarray, map(Image.open, image_paths))) / 255.0 - 0.5
+    batch_annot = map(lambda x: (x[1], x[2]), curr_batch)
     return batch, batch_annot, self.one_epoch_completed
 
   # gets image filename formatted as "path/to/dir/vid<vidid>_f<frameid>.jpg"

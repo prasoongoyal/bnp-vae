@@ -16,7 +16,7 @@ from io import open
 from itertools import imap
 
 #DEFAULT_ARCH = [np.prod(IMG_DIM), 1024, 1024, NUM_PATHS]
-DEFAULT_LEARNING_RATE = 1E-3
+DEFAULT_LEARNING_RATE = 1E-4
 
 class Model(object):
   # TODO: Add arguments for architecture, learning rate, etc.
@@ -98,7 +98,7 @@ class Model(object):
                       deconv_output_channels, unpool_size, tf.tanh) for (deconv_kernel_size,
                       deconv_output_channels, unpool_size) in zip(CONV_FILTER_SIZES,
                       CONV_NUM_CHANNELS[:-1], POOL_SIZES)]
-    x_reconstructed = tf.tanh(composeAll(dec_conv_layers)(z_reshape))
+    x_reconstructed = 2.0/np.pi * tf.tanh(composeAll(dec_conv_layers)(z_reshape))
 
     rec_loss = Model.l2_loss(x_reconstructed, x_in)
     kl_loss = Model.kl_loss(z_mean, z_log_sigma, mu_in, log_sigma_in)
@@ -161,7 +161,7 @@ class Model(object):
         self.update_latent_codes(z, x_annot)
 
         # update variational parameters periodically and save current state
-        if iteration%10000 == 0:
+        if iteration%1000 == 0:
           saver.save(self.session, os.path.join(self.output_dir, 'model'), 
                      global_step = iteration)
           self.write_latent_codes(os.path.join(self.output_dir, 
