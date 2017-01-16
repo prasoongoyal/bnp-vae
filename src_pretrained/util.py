@@ -5,9 +5,9 @@ import sys
 import functools
 from functional import partial, compose
 
-batch_size = 32
+batch_size = 16
 LATENT_CODE_SIZE = 100
-IMG_DIM = {'width': 180, 'height': 240, 'channels': 3}
+IMG_DIM = {'width': 224, 'height': 224, 'channels': 3}
 BRANCHING_FACTOR = int(sys.argv[3])
 NUM_LEVELS = int(sys.argv[4])
 NUM_INTERNAL_EDGES = BRANCHING_FACTOR * ((BRANCHING_FACTOR ** (NUM_LEVELS-2) - 1) /

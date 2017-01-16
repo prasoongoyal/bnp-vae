@@ -19,10 +19,13 @@ class vgg16:
     self.imgs = imgs
     self.convlayers()
     self.fc_layers()
-    self.probs = tf.nn.softmax(self.fc3l)
+    #self.probs = tf.nn.softmax(self.fc3l)
+    self.weights = weights
+    '''
     if weights is not None and sess is not None:
       self.load_weights(weights, sess)
-
+    '''
+    self.output = self.fc2l
 
   def convlayers(self):
     self.parameters = []
@@ -232,9 +235,10 @@ class vgg16:
       fc2b = tf.Variable(tf.constant(1.0, shape=[4096], dtype=tf.float32),
                  trainable=True, name='biases')
       fc2l = tf.nn.bias_add(tf.matmul(self.fc1, fc2w), fc2b)
-      self.fc2 = tf.nn.relu(fc2l)
+      self.fc2l = fc2l
       self.parameters += [fc2w, fc2b]
 
+    '''
     # fc3
     with tf.name_scope('fc3') as scope:
       fc3w = tf.Variable(tf.truncated_normal([4096, 1000],
@@ -244,10 +248,14 @@ class vgg16:
                  trainable=True, name='biases')
       self.fc3l = tf.nn.bias_add(tf.matmul(self.fc2, fc3w), fc3b)
       self.parameters += [fc3w, fc3b]
+    '''
 
-  def load_weights(self, weight_file, sess):
-    weights = np.load(weight_file)
+  def load_weights(self, sess):
+    weights = np.load(self.weights)
     keys = sorted(weights.keys())
+    #print keys
+    # remove the last fc layer weights
+    keys = keys[:-2]
     for i, k in enumerate(keys):
       print i, k, np.shape(weights[k])
       sess.run(self.parameters[i].assign(weights[k]))

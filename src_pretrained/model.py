@@ -11,12 +11,13 @@ from copy import deepcopy
 from scipy.special import digamma
 from util import *
 from layers import *
+from vgg16 import vgg16
 from var_inf import VarInf
 from io import open
 from itertools import imap
 
 #DEFAULT_ARCH = [np.prod(IMG_DIM), 1024, 1024, NUM_PATHS]
-DEFAULT_LEARNING_RATE = 1E-4
+DEFAULT_LEARNING_RATE = 1E-3
 
 class Model(object):
   # TODO: Add arguments for architecture, learning rate, etc.
@@ -35,9 +36,11 @@ class Model(object):
     self.session.run(tf.initialize_all_variables())
     
     (self.x_in, self.mu_in, self.log_sigma_in, self.z, self.z_mean, 
-     self.z_log_sigma, self.x_reconstructed, 
+     self.z_log_sigma, self.x_encoded, self.vgg_net, self.x_reconstructed, 
      self.rec_cost_mean, self.kl_cost_mean, self.cost, self.global_step, 
      self.train_op) = handles
+    
+    self.vgg_net.load_weights(self.session)
 
   def sampleMultinomial(self, theta_normalized):
     with tf.name_scope('sample_multinomial'):
@@ -51,23 +54,34 @@ class Model(object):
       return sample_idx
 
   def buildGraph(self):
+    '''
     # network parameters
     CONV_FILTER_SIZES = [5, 5, 3]
     CONV_NUM_CHANNELS = [IMG_DIM['channels'], 32, 32, 16]
     POOL_SIZES = [3, 4, 5]
-
     final_size = (int(IMG_DIM['width'] / np.prod(POOL_SIZES)), 
                   int(IMG_DIM['height'] / np.prod(POOL_SIZES)),
                   CONV_NUM_CHANNELS[-1])
     FC_SIZES = [int(np.prod(final_size)), 16, 16]
+    '''
+
+    # network parameters
+    CONV_FILTER_SIZES = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+    CONV_NUM_CHANNELS = [IMG_DIM['channels'], 64, 64, 128, 128, 256, 256, 256, 512, 512, 512, 512, 512, 512]
+    POOL_SIZES = [1, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1, 1, 2]
+    final_size = (int(IMG_DIM['width'] / np.prod(POOL_SIZES)), 
+                  int(IMG_DIM['height'] / np.prod(POOL_SIZES)),
+                  CONV_NUM_CHANNELS[-1])
+    FC_SIZES = [int(np.prod(final_size)), 4096, 1000]
 
     # network inputs
     x_in = tf.placeholder(tf.float32, shape=[None, IMG_DIM['width'], IMG_DIM['height'], 3], 
                           name='x')
     mu_in = tf.placeholder(tf.float32, shape=[None, LATENT_CODE_SIZE])
     log_sigma_in = tf.placeholder(tf.float32, shape=[None, 1])
-    dropout = tf.placeholder_with_default(1.0, shape=[], name='dropout')
+    dropout = tf.placeholder_with_default(0.8, shape=[], name='dropout')
 
+    '''
     enc_conv_layers = [ConvPool('encoder_conv_pool', conv_kernel_size, conv_output_channels,
                       pool_size, tf.tanh) for (conv_kernel_size, conv_output_channels, 
                       pool_size) in zip(CONV_FILTER_SIZES, CONV_NUM_CHANNELS[1:], POOL_SIZES)]
@@ -78,30 +92,39 @@ class Model(object):
     enc_fc_layers = [Dense('enc_fc', output_size, dropout, tf.tanh) 
                      for output_size in FC_SIZES[1:]]
     x_encoded = composeAll(reversed(enc_fc_layers))(x_flatten)
+    '''
 
-    # mean and standard deviation for sampling latent code
-    z_mean= Dense('z_mean', LATENT_CODE_SIZE)(x_encoded)
-    z_log_sigma = Dense('z_log_std', LATENT_CODE_SIZE)(x_encoded)
+    with tf.device('/gpu:0'):
+      vgg_net = vgg16(x_in, './pretrained_model/vgg16_weights.npz', self.session)
+      x_encoded = vgg_net.output
+      #x_encoded = tf.sigmoid(vgg_net.fc2)
 
-    # sample latent code
-    z = self.sampleGaussian(z_mean, z_log_sigma)
+      # mean and standard deviation for sampling latent code
+      z_mean = tf.tanh(Dense('z_mean', LATENT_CODE_SIZE)(x_encoded))
+      z_log_sigma = tf.tanh(Dense('z_log_std', LATENT_CODE_SIZE)(x_encoded))
 
-    # reconstruction
-    dec_fc_layers = [Dense('dec_fc', output_size, dropout, tf.tanh)
-                     for output_size in FC_SIZES[:-1]]
-    z_fc = composeAll(dec_fc_layers)(z)
+      # sample latent code
+      z = self.sampleGaussian(z_mean, z_log_sigma)
 
-    z_reshape = tf.reshape(z_fc, [-1, final_size[0], final_size[1], final_size[2]], 
-                           name='z_reshape')
+    with tf.device('/gpu:1'):
+      # reconstruction
+      dec_fc_layers = [Dense('dec_fc', output_size, dropout, tf.tanh)
+                       for output_size in FC_SIZES[:-1]]
+      z_fc = composeAll(dec_fc_layers)(z)
+  
+      z_reshape = tf.reshape(z_fc, [-1, final_size[0], final_size[1], final_size[2]], 
+                             name='z_reshape')
 
-    dec_conv_layers = [DeconvUnpool('decoder_deconv_unpool', deconv_kernel_size, 
-                      deconv_output_channels, unpool_size, tf.tanh) for (deconv_kernel_size,
-                      deconv_output_channels, unpool_size) in zip(CONV_FILTER_SIZES,
-                      CONV_NUM_CHANNELS[:-1], POOL_SIZES)]
-    x_reconstructed = 2.0/np.pi * tf.tanh(composeAll(dec_conv_layers)(z_reshape))
+      dec_conv_layers = [DeconvUnpool('decoder_deconv_unpool', deconv_kernel_size, 
+                        deconv_output_channels, unpool_size, tf.nn.tanh) for (deconv_kernel_size,
+                        deconv_output_channels, unpool_size) in zip(CONV_FILTER_SIZES,
+                        CONV_NUM_CHANNELS[:-1], POOL_SIZES)]
+      x_reconstructed = 255.0 * tf.sigmoid(composeAll(dec_conv_layers)(z_reshape))
+      #x_reconstructed = tf.sigmoid(composeAll(dec_conv_layers)(z_reshape))
 
-    rec_loss = Model.l2_loss(x_reconstructed, x_in)
-    kl_loss = Model.kl_loss(z_mean, z_log_sigma, mu_in, log_sigma_in)
+      rec_loss = Model.l2_loss(x_reconstructed, x_in)
+      #rec_loss = Model.cross_entropy_loss(x_reconstructed, x_in)
+      kl_loss = Model.kl_loss(z_mean, z_log_sigma, mu_in, log_sigma_in)
 
     global_step = tf.Variable(0, trainable=False)
 
@@ -119,12 +142,19 @@ class Model(object):
     with tf.name_scope('Adam_optimizer'):
       optimizer = tf.train.AdamOptimizer(self.learning_rate)
       tvars = tf.trainable_variables()
+      #print tvars
+      for (i, v) in enumerate(tvars):
+        if v.name == 'z_mean/weights:0':
+          break
+      tvars = tvars[i:]
+      for v in tvars:
+        print v.name
       grads_and_vars = optimizer.compute_gradients(cost, tvars)
       train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step,
                   name='minimize_cost')
 
-    return (x_in, mu_in, log_sigma_in, z, z_mean, z_log_sigma, x_reconstructed, 
-            rec_cost_mean, kl_cost_mean, cost, global_step, train_op)
+    return (x_in, mu_in, log_sigma_in, z, z_mean, z_log_sigma, x_encoded, vgg_net,
+            x_reconstructed, rec_cost_mean, kl_cost_mean, cost, global_step, train_op)
     
   def train(self, train_data, max_iter=np.inf, max_epochs=np.inf, outdir='./out'):
     saver = tf.train.Saver(tf.all_variables())
@@ -151,12 +181,37 @@ class Model(object):
         feed_dict = {self.x_in: x, 
                      self.mu_in: mu_true_path,
                      self.log_sigma_in: log_sigma_true_path}
-        fetches = [self.z, self.z_mean, self.z_log_sigma, 
+        fetches = [self.z, self.z_mean, self.z_log_sigma, self.x_encoded,
                    self.x_reconstructed, self.rec_cost_mean,
                    self.kl_cost_mean, self.cost, self.global_step, self.train_op]
 
-        (z, z_mean, z_log_sigma, x_reconstructed, rec_cost_mean, kl_cost_mean, cost,
-         iteration, _) = self.session.run(fetches, feed_dict)
+        (z, z_mean, z_log_sigma, x_encoded, x_reconstructed, rec_cost_mean, 
+         kl_cost_mean, cost, iteration, _) = self.session.run(fetches, feed_dict)
+
+        #print x
+        #print x_encoded
+        #print x_annot
+        
+        '''
+        print z_mean
+        print z_log_sigma
+        print mu_true_path
+        print log_sigma_true_path
+
+        t1 = np.sum(log_sigma_true_path - z_log_sigma, 1)
+        mu_diff_scaled = (mu_true_path - z_mean) / np.exp(log_sigma_true_path)
+        t2 = np.linalg.norm(mu_diff_scaled, 1)
+        t3 = np.sum(np.exp(2.0 * z_log_sigma) / np.exp(2.0 * log_sigma_true_path),1)
+        print t1, t2, t3
+        raw_input()
+        kl_loss = tf.reduce_sum(tf.subtract(log_sigma_in, log_sigma_pred), axis=1)
+        mu_diff_scaled = tf.div(tf.subtract(mu_in, mu_pred), tf.exp(log_sigma_in))
+        kl_loss = tf.add(kl_loss, tf.reduce_sum(tf.square(mu_diff_scaled), axis=1))
+        kl_loss = tf.add(kl_loss, tf.reduce_sum(tf.div(tf.exp(2.0 * log_sigma_pred), 
+                                       tf.exp(2.0 * log_sigma_in)), axis=1))
+        '''
+        #print x_reconstructed
+        #print z_log_sigma
 
         self.update_latent_codes(z, x_annot)
 
@@ -180,8 +235,8 @@ class Model(object):
         now = datetime.now().isoformat()[11:]
         print '---------- Training end: {} -----------\n'.format(now)
         # write model
-        saver.save(self.session, os.path.join(self.output_dir, 'model'), 
-                   global_step = iteration)
+        #saver.save(self.session, os.path.join(self.output_dir, 'model'), 
+        #           global_step = iteration)
         sys.exit(0)
 
   def update_latent_codes(self, z_batch, x_annot_batch):
@@ -224,3 +279,10 @@ class Model(object):
   def l2_loss(obs, actual):
     with tf.name_scope('l2_loss'):
       return tf.reduce_mean(tf.square(obs - actual), [1, 2, 3])
+
+  @staticmethod
+  def cross_entropy_loss(obs, actual):
+    offset = 1E-7
+    with tf.name_scope('cross_entropy'):
+      obs_ = tf.clip_by_value(obs, offset, 1 - offset)
+      return -tf.reduce_mean(actual * tf.log(obs_) + (1 - actual) * tf.log(1 - obs_), [1, 2, 3])

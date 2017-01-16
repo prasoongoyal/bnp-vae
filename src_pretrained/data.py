@@ -38,7 +38,8 @@ class Data(object):
     batch = []
     batch_annot = []
     image_paths = map(lambda x: x[0], curr_batch)
-    batch = np.asarray(map(np.asarray, map(Image.open, image_paths))) / 255.0 - 0.5
+    batch = np.asarray(map(np.asarray, map(lambda x:x.resize((224, 224)), 
+                       map(Image.open, image_paths))))
     batch_annot = map(lambda x: (x[1], x[2]), curr_batch)
     return batch, batch_annot, self.one_epoch_completed
 

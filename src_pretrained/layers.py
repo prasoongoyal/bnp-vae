@@ -4,6 +4,7 @@ from __future__ import absolute_import
 
 import tensorflow as tf
 
+'''
 # Convolution followed by pooling. Convolution always uses stride of 1, to
 # generate output of the same size as the input for easier reversibility.
 # The stride for pooling is the same as the kernel size, for easier reversibility.
@@ -36,6 +37,7 @@ class ConvPool(object):
     x_pool = tf.nn.max_pool(x_conv, [1, pool_size, pool_size, 1], 
                            [1, pool_size, pool_size, 1], "VALID")
     return x_pool
+'''
 
 # Similar to ConvPool -- implements deconv as convolution; unpool as upsampling using
 # bilinear interpolation
@@ -64,16 +66,18 @@ class DeconvUnpool(object):
   def forward(x_in, conv_W, conv_b, conv_ksize, pool_size):
     orig_height = x_in.get_shape()[1].value
     orig_width = x_in.get_shape()[2].value
-    new_height = orig_height * pool_size
-    new_width = orig_width * pool_size
-
+    if pool_size > 1:
+      new_height = orig_height * pool_size
+      new_width = orig_width * pool_size
+      x_unpool = tf.image.resize_images(x_in, [new_height, new_width])
+    else:
+      x_unpool = tf.identity(x_in)
     pad_size = int((conv_ksize - 1)/2)
-    x_pad = tf.pad(x_in, [[0, 0], [pad_size, pad_size], [pad_size, pad_size], [0, 0]])
+    x_pad = tf.pad(x_unpool, [[0, 0], [pad_size, pad_size], [pad_size, pad_size], [0, 0]])
     x_conv = tf.nn.conv2d(x_pad, conv_W, [1, 1, 1, 1], "VALID")
     #x_pool = tf.nn.max_pool(tf.tanh(x_conv), [1, pool_size, pool_size, 1], 
     #                       [1, pool_size, pool_size, 1], "VALID")
-    x_unpool = tf.image.resize_images(x_conv, [new_height, new_width])
-    return x_unpool
+    return x_conv
 
 class Dense(object):
   """Fully-connected layer"""
