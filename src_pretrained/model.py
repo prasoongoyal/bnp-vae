@@ -37,11 +37,11 @@ class Model(object):
     #self.session.run(tf.contrib.layers.xavier_initializer(uniform=False))
     
     (self.x_in, self.mu_in, self.log_sigma_in, self.z, self.z_mean, 
-     self.z_log_sigma, self.x_encoded, self.vgg_net, self.x_reconstructed, 
+     self.z_log_sigma, self.x_encoded, self.x_reconstructed, 
      self.rec_cost_mean, self.kl_cost_mean, self.cost, self.global_step, 
      self.train_op) = handles
     
-    self.vgg_net.load_weights(self.session)
+    #self.vgg_net.load_weights(self.session)
 
   def sampleMultinomial(self, theta_normalized):
     with tf.name_scope('sample_multinomial'):
@@ -64,6 +64,7 @@ class Model(object):
                   int(IMG_DIM['height'] / np.prod(POOL_SIZES)),
                   CONV_NUM_CHANNELS[-1])
     FC_SIZES = [int(np.prod(final_size)), 16, 16]
+    '''
 
     # network parameters
     CONV_FILTER_SIZES = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
@@ -83,32 +84,33 @@ class Model(object):
                   int(IMG_DIM['height'] / np.prod(POOL_SIZES)),
                   CONV_NUM_CHANNELS[-1])
     FC_SIZES = [int(np.prod(final_size)), 4096, 1000]
-
+    '''
     # network inputs
     x_in = tf.placeholder(tf.float32, shape=[None, IMG_DIM['width'], IMG_DIM['height'], 3], 
                           name='x')
     mu_in = tf.placeholder(tf.float32, shape=[None, LATENT_CODE_SIZE])
     log_sigma_in = tf.placeholder(tf.float32, shape=[None, 1])
-    dropout = tf.placeholder_with_default(0.4, shape=[], name='dropout')
-
-    '''
-    enc_conv_layers = [ConvPool('encoder_conv_pool', conv_kernel_size, conv_output_channels,
-                      pool_size, tf.tanh) for (conv_kernel_size, conv_output_channels, 
-                      pool_size) in zip(CONV_FILTER_SIZES, CONV_NUM_CHANNELS[1:], POOL_SIZES)]
-    x_conv = composeAll(reversed(enc_conv_layers))(x_in)
-
-    x_flatten = tf.reshape(x_conv, [-1, int(np.prod(final_size))], name='x_flatten')
-
-    enc_fc_layers = [Dense('enc_fc', output_size, dropout, tf.tanh) 
-                     for output_size in FC_SIZES[1:]]
-    x_encoded = composeAll(reversed(enc_fc_layers))(x_flatten)
-    '''
+    dropout = tf.placeholder_with_default(1.0, shape=[], name='dropout')
 
     with tf.device('/gpu:0'):
-      vgg_net = vgg16(x_in, './pretrained_model/vgg16_weights.npz', self.session)
-      x_encoded = vgg_net.output
+      enc_conv_layers = [ConvPool('conv_pool'+str(conv_id), conv_kernel_size, 
+                        conv_output_channels, pool_size, tf.nn.relu)
+                        for (conv_id, conv_kernel_size, conv_output_channels, 
+			pool_size) in zip(range(len(CONV_FILTER_SIZES)), 
+                        CONV_FILTER_SIZES, CONV_NUM_CHANNELS[1:], POOL_SIZES)]
+      x_conv = composeAll(reversed(enc_conv_layers))(x_in)
+
+      x_flatten = tf.reshape(x_conv, [-1, int(np.prod(final_size))], name='x_flatten')
+
+      enc_fc_layers = [Dense('fc'+str(fc_id), output_size, dropout, tf.nn.relu, isdecoder=False)
+		       for (fc_id, output_size) in enumerate(FC_SIZES[1:])]
+      x_encoded = composeAll(reversed(enc_fc_layers))(x_flatten)
+
+      #vgg_net = vgg16(x_in, './pretrained_model/vgg16_weights.npz', self.session)
+      #x_encoded = vgg_net.output
       #x_encoded = tf.sigmoid(vgg_net.fc2)
 
+    with tf.device('/gpu:1'):
       # mean and standard deviation for sampling latent code
       z_mean = tf.tanh(Dense('z_mean', LATENT_CODE_SIZE)(x_encoded))
       z_log_sigma = tf.tanh(Dense('z_log_std', LATENT_CODE_SIZE)(x_encoded))
@@ -116,22 +118,25 @@ class Model(object):
       # sample latent code
       z = self.sampleGaussian(z_mean, z_log_sigma)
 
-    with tf.device('/gpu:1'):
+      # project back to VGG fc dimension
+      z_proj = tf.tanh(Dense('z_proj', FC_SIZES[-1])(z))
+
       # reconstruction
-      dec_fc_layers = [Dense('dec_fc', output_size, dropout, tf.tanh)
-                       for output_size in FC_SIZES[:-1]]
-      z_fc = composeAll(dec_fc_layers)(z)
+      dec_fc_layers = [Dense('fc'+str(fc_id), output_size, dropout, tf.nn.relu, isdecoder=True)
+                       for (fc_id, output_size) in enumerate(FC_SIZES[:-1])]
+      z_fc = composeAll(dec_fc_layers)(z_proj)
   
       z_reshape = tf.reshape(z_fc, [-1, final_size[0], final_size[1], final_size[2]], 
                              name='z_reshape')
 
-      dec_conv_layers = [DeconvUnpool('decoder_deconv_unpool'+str(conv_id), deconv_kernel_size, 
-                        deconv_output_channels, unpool_size, tf.nn.softsign) 
+      dec_conv_layers = [DeconvUnpool('conv_pool'+str(conv_id), deconv_kernel_size, 
+                        deconv_output_channels, unpool_size, tf.nn.relu) 
                         for (conv_id, deconv_kernel_size,
                         deconv_output_channels, unpool_size) in 
                         zip(range(len(CONV_FILTER_SIZES)), CONV_FILTER_SIZES,
                         CONV_NUM_CHANNELS[:-1], POOL_SIZES)]
-      x_reconstructed = 255.0/2.0 * (composeAll(dec_conv_layers)(z_reshape) + 1.0)
+      #x_reconstructed = 255.0/2.0 * (composeAll(dec_conv_layers)(z_reshape) + 1.0)
+      x_reconstructed = composeAll(dec_conv_layers)(z_reshape)
       #x_reconstructed = tf.sigmoid(composeAll(dec_conv_layers)(z_reshape))
 
       rec_loss = Model.l2_loss(x_reconstructed, x_in)
@@ -156,16 +161,14 @@ class Model(object):
       tvars = tf.trainable_variables()
       #print tvars
       for (i, v) in enumerate(tvars):
-        if v.name == 'z_mean/weights:0':
-          break
-      tvars = tvars[i:]
-      for v in tvars:
-        print v.name
-      grads_and_vars = optimizer.compute_gradients(cost, tvars)
+        print v.name, v.device
+      print len(tvars)
+      grads_and_vars = optimizer.compute_gradients(cost, tvars, 
+                       colocate_gradients_with_ops=True)
       train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step,
-                  name='minimize_cost')
+                 name='minimize_cost')
 
-    return (x_in, mu_in, log_sigma_in, z, z_mean, z_log_sigma, x_encoded, vgg_net,
+    return (x_in, mu_in, log_sigma_in, z, z_mean, z_log_sigma, x_encoded,
             x_reconstructed, rec_cost_mean, kl_cost_mean, cost, global_step, train_op)
     
   def train(self, train_data, max_iter=np.inf, max_epochs=np.inf, outdir='./out'):
