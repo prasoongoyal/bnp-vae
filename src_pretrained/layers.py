@@ -52,6 +52,15 @@ class DeconvUnpool(object):
 
   def __call__(self, x):
     with tf.name_scope(self.scope):
+      self.conv_W = tf.get_variable(self.scope+"_W", shape=[self.conv_kernel_size, 
+                    self.conv_kernel_size, x.get_shape()[-1].value, 
+                    self.conv_output_channels], 
+                    initializer=tf.contrib.layers.xavier_initializer_conv2d(uniform=False))
+      self.conv_b = tf.get_variable(self.scope+"b", shape=[self.conv_output_channels],
+                    initializer=tf.contrib.layers.xavier_initializer(uniform=False))
+      return self.nonlinearity(DeconvUnpool.forward(x, self.conv_W, self.conv_b, 
+                               self.conv_kernel_size, self.pool_size))
+      '''
       while True:
         try: # reuse weights if already initialized
           return self.nonlinearity(DeconvUnpool.forward(x, self.conv_W, self.conv_b, 
@@ -61,23 +70,23 @@ class DeconvUnpool(object):
                         self.conv_kernel_size, x.get_shape()[-1].value, 
                         self.conv_output_channels]))
           self.conv_b = tf.Variable(tf.random_normal([self.conv_output_channels]))
-
+      '''
   @staticmethod
   def forward(x_in, conv_W, conv_b, conv_ksize, pool_size):
     orig_height = x_in.get_shape()[1].value
     orig_width = x_in.get_shape()[2].value
+    pad_size = int((conv_ksize - 1)/2)
+    x_pad = tf.pad(x_in, [[0, 0], [pad_size, pad_size], [pad_size, pad_size], [0, 0]])
+    x_conv = tf.nn.conv2d(x_pad, conv_W, [1, 1, 1, 1], "VALID")
     if pool_size > 1:
       new_height = orig_height * pool_size
       new_width = orig_width * pool_size
-      x_unpool = tf.image.resize_images(x_in, [new_height, new_width])
+      x_unpool = tf.image.resize_images(x_conv, [new_height, new_width])
     else:
-      x_unpool = tf.identity(x_in)
-    pad_size = int((conv_ksize - 1)/2)
-    x_pad = tf.pad(x_unpool, [[0, 0], [pad_size, pad_size], [pad_size, pad_size], [0, 0]])
-    x_conv = tf.nn.conv2d(x_pad, conv_W, [1, 1, 1, 1], "VALID")
+      x_unpool = tf.identity(x_conv)
     #x_pool = tf.nn.max_pool(tf.tanh(x_conv), [1, pool_size, pool_size, 1], 
     #                       [1, pool_size, pool_size, 1], "VALID")
-    return x_conv
+    return x_unpool
 
 class Dense(object):
   """Fully-connected layer"""

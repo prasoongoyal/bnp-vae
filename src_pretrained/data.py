@@ -34,6 +34,7 @@ class Data(object):
     if (self.batch_start_idx >= len(self.data)):
       self.batch_start_idx = 0
       self.one_epoch_completed = True
+      self.data = np.random.permutation(self.data)
     # load images and preprocess
     batch = []
     batch_annot = []

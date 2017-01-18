@@ -5,7 +5,7 @@ import sys
 import functools
 from functional import partial, compose
 
-batch_size = 16
+batch_size = 32
 LATENT_CODE_SIZE = 100
 IMG_DIM = {'width': 224, 'height': 224, 'channels': 3}
 BRANCHING_FACTOR = int(sys.argv[3])
