@@ -2,8 +2,8 @@ from __future__ import division
 from __future__ import with_statement
 from __future__ import absolute_import
 
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
 
 # Convolution followed by pooling. Convolution always uses stride of 1, to
 # generate output of the same size as the input for easier reversibility.
@@ -119,8 +119,6 @@ class Dense_Share(object):
     self.isdecoder = isdecoder
     self.dropout = dropout # keep_prob
     self.nonlinearity = nonlinearity
-    self.w_init = w_init
-    self.b_init = b_init
 
   def __call__(self, x):
     """Dense layer currying, to apply layer to any input tensor `x`"""
@@ -133,8 +131,10 @@ class Dense_Share(object):
                     initializer=tf.contrib.layers.xavier_initializer(uniform=False))
         return self.nonlinearity(tf.matmul(x, tf.transpose(self.w)) + self.b)
       else:
-        self.b = tf.get_variable('b_enc', initializer=tf.constant(self.b_init))
-        self.w = tf.get_variable('W', initializer=tf.constant(self.w_init))
+        self.b = tf.get_variable('b_enc', shape=[self.size], initializer=
+                                 tf.contrib.layers.xavier_initializer(uniform=False))
+        self.w = tf.get_variable('W', shape=[x.get_shape()[1].value, self.size], initializer=
+                                 tf.contrib.layers.xavier_initializer(uniform=False))
         print self.b.name
         print self.w.name
         return self.nonlinearity(tf.matmul(x, self.w) + self.b)

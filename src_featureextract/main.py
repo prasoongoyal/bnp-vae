@@ -9,7 +9,7 @@ from util import *
 
 #TODO: Add an option to resume training from pretrained model.
 def main(files_list, output_dir):
-  train_data = Data(files_list, batch_size)
+  train_data = Data(files_list, '/scratch/ans556/prasoon/youcook_features_th.npy')
   model = Model(batch_size=batch_size, output_dir=output_dir)
   model.train(train_data)
 

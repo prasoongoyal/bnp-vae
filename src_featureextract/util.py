@@ -1,12 +1,12 @@
 from __future__ import absolute_import
 import numpy as np
-import tensorflow as tf
 import sys
 import functools
 from functional import partial, compose
+import tensorflow as tf
 
 batch_size = 32
-LATENT_CODE_SIZE = 100
+LATENT_CODE_SIZE = 10
 IMG_DIM = {'width': 224, 'height': 224, 'channels': 3}
 BRANCHING_FACTOR = int(sys.argv[3])
 NUM_LEVELS = int(sys.argv[4])
@@ -17,7 +17,6 @@ NUM_NODES = (BRANCHING_FACTOR ** NUM_LEVELS - 1) / (BRANCHING_FACTOR - 1)
 NUM_INTERNAL_NODES = NUM_NODES - NUM_PATHS
 NUM_EDGES = BRANCHING_FACTOR * ((BRANCHING_FACTOR ** (NUM_LEVELS-1) - 1) / 
                                 (BRANCHING_FACTOR - 1))
-
 # ncrp hyperparameters
 ALPHA = np.zeros(shape=LATENT_CODE_SIZE)
 GAMMA = 10.0

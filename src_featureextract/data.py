@@ -7,40 +7,48 @@ import numpy as np
 from util import *
 
 class Data(object):
-  def __init__(self, files_list, batch_size):
+  def __init__(self, files_list, data_file):
     self.files_list = files_list
     self.batch_size = batch_size
-    self.data = self.prepare_data()
+    self.data = np.load(data_file)
+    self.metadata = self.prepare_data()
+    #print self.metadata
     self.one_epoch_completed = False
 
     self.batch_start_idx = 0
 
   def prepare_data(self):
     train_data = []
+    idx = 0
     with open(self.files_list) as f:
       for line in f.readlines():
         path = line.strip()
         videoid, frameid = Data.get_videoid_frameid(path)
-        train_data.append((path, videoid, frameid))
+        train_data.append((idx, videoid, frameid))
+        idx += 1
+    #print idx, np.shape(self.data)
+    #print train_data[:10]
     # shuffle data
-    train_data = np.random.permutation(train_data)
+    #train_data = np.random.permutation(train_data)
+    np.random.shuffle(train_data)
+    #print train_data[:10]
     print u'Training on %d image files...' % len(train_data)
     return train_data
 
   def get_next_batch(self):
-    curr_batch = self.data[self.batch_start_idx:
+    curr_batch = self.metadata[self.batch_start_idx:
                   self.batch_start_idx+self.batch_size]     # works even for last batch
     self.batch_start_idx += self.batch_size
-    if (self.batch_start_idx >= len(self.data)):
+    if (self.batch_start_idx >= len(self.metadata)):
       self.batch_start_idx = 0
       self.one_epoch_completed = True
-      self.data = np.random.permutation(self.data)
+      #self.metadata = np.random.permutation(self.data)
+      np.random.shuffle(self.metadata)
     # load images and preprocess
     batch = []
     batch_annot = []
-    image_paths = map(lambda x: x[0], curr_batch)
-    batch = np.asarray(map(np.asarray, map(lambda x:x.resize((224, 224)), 
-                       map(Image.open, image_paths))))
+    data_indices = map(lambda x: x[0], curr_batch)
+    batch = self.data[data_indices, :]
     batch_annot = map(lambda x: (x[1], x[2]), curr_batch)
     return batch, batch_annot, self.one_epoch_completed
 
@@ -51,8 +59,8 @@ class Data(object):
       path = path[:-4]                                      # remove extension
       filename = path[path.rfind(u'/')+1:]                  # remove path to directory
       videoid, frameid = filename.split(u'_')               # split videoid and frameid
-      videoid = eval(videoid[3:])                           # extract videoid
-      frameid = eval(frameid[1:])                           # extract frameid
+      videoid = videoid[3:]                                 # extract videoid
+      frameid = frameid[1:]                                 # extract frameid
       return videoid, frameid
     except:
       sys.exit(u'Invalid file name format!')
