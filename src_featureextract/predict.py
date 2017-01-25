@@ -12,7 +12,8 @@ from util import *
 def main(files_list, output_dir):
   train_data = Data(files_list, '/scratch/ans556/prasoon/data/MED/med_train_5_th.npy')
   model = Model(batch_size=batch_size, output_dir=output_dir)
-  model.train(train_data)
+  #model.train(train_data)
+  model.predict(train_data)
 
 if __name__ == u"__main__":
   tf.reset_default_graph()

@@ -209,6 +209,26 @@ class Model(object):
         #           global_step = iteration)
         sys.exit(0)
 
+  def predict(self, data):
+    # load model
+    saver = tf.train.Saver(tf.all_variables())
+    saver.restore(self.session, os.path.join(self.output_dir, 'model-10000'))
+    print 'model loaded'
+    all_z = np.zeros(shape=(0, 10))
+    while True:
+      x, x_annot, one_epoch_completed = data.get_next_batch()
+      feed_dict = {self.x_in: x}
+      fetches = [self.z, self.z_mean, self.z_log_sigma, self.x_encoded,
+                 self.x_reconstructed]
+      (z, z_mean, z_log_sigma, x_encoded, x_reconstructed) = \
+                  self.session.run(fetches, feed_dict)
+      all_z = np.append(all_z, z, axis=0)
+      #print z_mean
+      #print z_log_sigma
+      if one_epoch_completed == True:
+        break
+    print np.shape(all_z)
+
   def update_latent_codes(self, z_batch, x_annot_batch):
     for (z, x_annot) in zip(z_batch, x_annot_batch):
       (vidid, frameid) = x_annot
