@@ -57,9 +57,10 @@ class Model(object):
     final_size = (int(IMG_DIM['width'] / np.prod(POOL_SIZES)), 
                   int(IMG_DIM['height'] / np.prod(POOL_SIZES)),
                   CONV_NUM_CHANNELS[-1])
-    FC_SIZES = [int(np.prod(final_size)), 4096, 4096]
+    #FC_SIZES = [int(np.prod(final_size)), 1024, 1024, 1024, 1024, 1024, 1024]
+    FC_SIZES = [4096, 1024, 1024, 1024, 1024, 1024, 1024]
     # network inputs
-    x_in = tf.placeholder(tf.float32, shape=[None, 25088], 
+    x_in = tf.placeholder(tf.float32, shape=[None, 4096], 
                           name='x')
     mu_in = tf.placeholder(tf.float32, shape=[None, LATENT_CODE_SIZE])
     log_sigma_in = tf.placeholder(tf.float32, shape=[None, 1])
@@ -77,7 +78,7 @@ class Model(object):
                        zip(range(len(FC_SIZES)-1), FC_SIZES[1:], nonlinearity_list)]
       x_encoded = composeAll(reversed(enc_fc_layers))(x_in)
 
-    with tf.device('/gpu:1'):
+    with tf.device('/gpu:0'):
       # mean and standard deviation for sampling latent code
       z_mean = tf.tanh(Dense_NoShare('z_mean', LATENT_CODE_SIZE)(x_encoded))
       z_log_sigma = tf.tanh(Dense_NoShare('z_log_std', LATENT_CODE_SIZE)(x_encoded))
@@ -90,7 +91,7 @@ class Model(object):
 
       # reconstruction
       nonlinearity_list = [tf.tanh] * (len(FC_SIZES)-1)
-      nonlinearity_list[-1] = tf.sigmoid
+      nonlinearity_list[0] = tf.sigmoid
       dec_fc_layers = [Dense_NoShare('fc'+str(fc_id), output_size, dropout, nonlin)
                        for (fc_id, output_size, nonlin) in zip(range(len(FC_SIZES[:-1])), 
                        FC_SIZES[:-1], nonlinearity_list)]
@@ -100,9 +101,10 @@ class Model(object):
       #x_rec_scaled = 128.0 * tf.nn.softsign(x_reconstructed)
       #x_reconstructed = tf.sigmoid(composeAll(dec_conv_layers)(z_reshape))
 
-      rec_loss = Model.l2_loss(x_reconstructed, x_in)
-      #rec_loss = Model.cross_entropy_loss(x_reconstructed, x_in)
+      #rec_loss = Model.l2_loss(x_reconstructed, x_in)
+      rec_loss = Model.cross_entropy_loss(x_reconstructed, x_in)
       kl_loss = Model.kl_loss(z_mean, z_log_sigma, mu_in, log_sigma_in)
+      reg_loss = Model.l2_reg(tf.trainable_variables())
 
     global_step = tf.Variable(0, trainable=False)
 
@@ -112,8 +114,10 @@ class Model(object):
     with tf.name_scope('kl_cost_mean'):
       kl_cost_mean = tf.reduce_mean(kl_loss)
 
+    #with tf.name_scope()
+
     with tf.name_scope('cost'):
-      cost = tf.reduce_mean(rec_loss + kl_loss, 
+      cost = tf.reduce_mean(eval(sys.argv[7]) * rec_loss + 1.0 * kl_loss + 1.0 * reg_loss,
                             name='vae_cost')
 
     # optimization
@@ -171,47 +175,18 @@ class Model(object):
         (z, z_mean, z_log_sigma, x_encoded, x_reconstructed, rec_cost_mean, 
          kl_cost_mean, cost, iteration, _) = self.session.run(fetches, feed_dict)
 
-        if (iteration % 100 == 0):
+        if (iteration % 1000 == 0):
           (hist_x, bins_x) = np.histogram(x)
           (hist_xr, bins_xr) = np.histogram(x_reconstructed)
           print hist_x
           print bins_x
           print hist_xr
           print bins_xr
-          #print x_annot
-          #print x
-          #print x_encoded
-        #print np.min(x), np.mean(x), np.max(x)
-        #print np.min(x_reconstructed), np.mean(x_reconstructed), np.max(x_reconstructed)
-        #print x_reconstructed
-        #print x_encoded
-        #print x_annot
-        
-        '''
-        print z_mean
-        print z_log_sigma
-        print mu_true_path
-        print log_sigma_true_path
-
-        t1 = np.sum(log_sigma_true_path - z_log_sigma, 1)
-        mu_diff_scaled = (mu_true_path - z_mean) / np.exp(log_sigma_true_path)
-        t2 = np.linalg.norm(mu_diff_scaled, 1)
-        t3 = np.sum(np.exp(2.0 * z_log_sigma) / np.exp(2.0 * log_sigma_true_path),1)
-        print t1, t2, t3
-        raw_input()
-        kl_loss = tf.reduce_sum(tf.subtract(log_sigma_in, log_sigma_pred), axis=1)
-        mu_diff_scaled = tf.div(tf.subtract(mu_in, mu_pred), tf.exp(log_sigma_in))
-        kl_loss = tf.add(kl_loss, tf.reduce_sum(tf.square(mu_diff_scaled), axis=1))
-        kl_loss = tf.add(kl_loss, tf.reduce_sum(tf.div(tf.exp(2.0 * log_sigma_pred), 
-                                       tf.exp(2.0 * log_sigma_in)), axis=1))
-        '''
-        #print x_reconstructed
-        #print z_log_sigma
 
         self.update_latent_codes(z, x_annot)
 
         # update variational parameters periodically and save current state
-        if iteration%100 == 0:
+        if iteration%10000 == 0:
           saver.save(self.session, os.path.join(self.output_dir, 'model'), 
                      global_step = iteration)
           self.write_latent_codes(os.path.join(self.output_dir, 
@@ -281,10 +256,17 @@ class Model(object):
       return tf.reduce_mean(tf.square(obs - actual), [1])
 
   @staticmethod
+  def l2_reg(vars):
+    loss = 0
+    for v in vars:
+      loss += tf.nn.l2_loss(v)
+    return loss
+
+  @staticmethod
   def cross_entropy_loss(obs, actual):
     #obs_scaled = obs / 255.0
     #actual_scaled = actual / 255.0
     offset = 1E-7
     with tf.name_scope('cross_entropy'):
       obs_ = tf.clip_by_value(obs, offset, 1 - offset)
-      return -tf.reduce_mean(actual * tf.log(obs_) + (1 - actual) * tf.log(1 - obs_), [1, 2, 3])
+      return -tf.reduce_mean(actual * tf.log(obs_) + (1 - actual) * tf.log(1 - obs_), [1])

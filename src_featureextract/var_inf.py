@@ -26,10 +26,14 @@ class VarInf(object):
       try:
         path_prob = self.phi[vidid][frameid]
       except KeyError:
-        path_prob = [1.0 / NUM_PATHS] * NUM_PATHS
-      true_path_idx = NUM_INTERNAL_NODES + np.random.choice(NUM_PATHS, p=path_prob)
-      true_path_mu = np.random.multivariate_normal(self.alpha[true_path_idx], 
-                                      np.diag(1.0 / self.sigmasqr_inv[true_path_idx]))
+        #path_prob = [1.0 / NUM_PATHS] * NUM_PATHS
+        path_prob = np.random.random(size=NUM_PATHS)
+        path_prob = path_prob / np.sum(path_prob)
+      #true_path_idx = NUM_INTERNAL_NODES + np.random.choice(NUM_PATHS, p=path_prob)
+      #true_path_mu = np.random.multivariate_normal(self.alpha[true_path_idx], 
+      #                                np.diag(1.0 / self.sigmasqr_inv[true_path_idx]))
+      true_path_idx = NUM_INTERNAL_NODES + np.argmax(path_prob)
+      true_path_mu = self.alpha[true_path_idx]
       true_path_mu_batch.append(np.squeeze(true_path_mu))
     return np.asarray(true_path_mu_batch)
 
