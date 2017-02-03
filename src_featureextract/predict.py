@@ -10,7 +10,7 @@ from util import *
 
 #TODO: Add an option to resume training from pretrained model.
 def main(files_list, output_dir):
-  train_data = Data(files_list, '/scratch/ans556/prasoon/data/MED/med_train_5_th.npy')
+  train_data = Data(files_list, '/work/ans556/prasoon/Features/full_data_th.npy')
   model = Model(batch_size=batch_size, output_dir=output_dir)
   #model.train(train_data)
   model.predict(train_data)

@@ -2,6 +2,7 @@ from util import *
 from copy import deepcopy
 from scipy.special import digamma
 from datetime import datetime
+import sys
 
 class VarInf(object):
   def __init__(self):
@@ -29,17 +30,32 @@ class VarInf(object):
         #path_prob = [1.0 / NUM_PATHS] * NUM_PATHS
         path_prob = np.random.random(size=NUM_PATHS)
         path_prob = path_prob / np.sum(path_prob)
-      #true_path_idx = NUM_INTERNAL_NODES + np.random.choice(NUM_PATHS, p=path_prob)
-      #true_path_mu = np.random.multivariate_normal(self.alpha[true_path_idx], 
-      #                                np.diag(1.0 / self.sigmasqr_inv[true_path_idx]))
-      true_path_idx = NUM_INTERNAL_NODES + np.argmax(path_prob)
-      true_path_mu = self.alpha[true_path_idx]
+      '''
+      try:
+        _ = self.phi[vidid]
+        mult_factor = np.ones(shape=(NUM_PATHS))
+        for f in self.phi[vidid]:
+          if (eval(f) < eval(frameid)):
+            # reduce probability of highest prob path
+            max_prob_path = np.argmax(self.phi[vidid][f])
+            for p in range(max_prob_path):
+              mult_factor[p] = eval(sys.argv[7])
+        path_prob = path_prob * mult_factor
+        path_prob = path_prob / np.sum(path_prob)
+      except KeyError:
+        pass
+      '''
+      true_path_idx = NUM_INTERNAL_NODES + np.random.choice(NUM_PATHS, p=path_prob)
+      true_path_mu = np.random.multivariate_normal(self.alpha[true_path_idx], 
+                                      np.diag(1.0 / self.sigmasqr_inv[true_path_idx]))
+      #true_path_idx = NUM_INTERNAL_NODES + np.argmax(path_prob)
+      #true_path_mu = self.alpha[true_path_idx]
       true_path_mu_batch.append(np.squeeze(true_path_mu))
     return np.asarray(true_path_mu_batch)
 
   def update_variational_parameters(self, latent_codes):
     print 'Performing variational inference...'
-    for iteration in range(10):
+    for iteration in range(1):
       sum_phi_z, sum_phi = self.compute_sums(latent_codes)
       self.compute_sigma(sum_phi_z, sum_phi)
       self.compute_alpha(sum_phi_z, sum_phi)
@@ -184,4 +200,6 @@ class VarInf(object):
 
   def write_alpha(self, filename):
     np.savetxt(filename, self.alpha)
+  def write_sigma(self, filename):
+    np.savetxt(filename, self.sigmasqr_inv)
       

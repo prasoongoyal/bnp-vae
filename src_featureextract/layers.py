@@ -84,16 +84,21 @@ class Dense_NoShare():
         self.dropout = dropout # keep_prob
         self.nonlinearity = nonlinearity
 
-    def __call__(self, x):
+    def __call__(self, x, dropout=None):
         """Dense layer currying, to apply layer to any input tensor `x`"""
         # tf.Tensor -> tf.Tensor
         with tf.name_scope(self.scope):
             while True:
+                print dropout
                 try: # reuse weights if already initialized
+                    if dropout is None:
+                      self.w = tf.nn.dropout(self.w, self.dropout)
+                    else:
+                      self.w = tf.nn.dropout(self.w, dropout)
                     return self.nonlinearity(tf.matmul(x, self.w) + self.b)
                 except(AttributeError):
                     self.w, self.b = self.wbVars(x.get_shape()[1].value, self.size)
-                    self.w = tf.nn.dropout(self.w, self.dropout)
+                    #self.w = tf.nn.dropout(self.w, self.dropout)
 
     @staticmethod
     def wbVars(fan_in, fan_out):

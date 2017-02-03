@@ -4,12 +4,13 @@ import sys
 import functools
 from functional import partial, compose
 import tensorflow as tf
+import sys
 
-batch_size = 32
-LATENT_CODE_SIZE = 10
+batch_size = eval(sys.argv[6])
+LATENT_CODE_SIZE = eval(sys.argv[5])
 IMG_DIM = {'width': 224, 'height': 224, 'channels': 3}
-BRANCHING_FACTOR = int(sys.argv[3])
-NUM_LEVELS = int(sys.argv[4])
+BRANCHING_FACTOR = eval(sys.argv[3])
+NUM_LEVELS = eval(sys.argv[4])
 NUM_INTERNAL_EDGES = BRANCHING_FACTOR * ((BRANCHING_FACTOR ** (NUM_LEVELS-2) - 1) /
                                          (BRANCHING_FACTOR - 1))
 NUM_PATHS = BRANCHING_FACTOR ** (NUM_LEVELS - 1)
