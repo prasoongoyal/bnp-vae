@@ -5,6 +5,7 @@ from datetime import datetime
 import sys
 from node import Node
 from util import *
+import cPickle
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.metrics import silhouette_samples
 
@@ -72,46 +73,118 @@ class VarInf(object):
 
   def update_variational_parameters(self, latent_codes):
     print 'Performing variational inference...'
+    print 'Memory usage: %s (kb)' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     latent_codes_matrix = self.get_matrix_from_dict(latent_codes)
+    print 'Memory usage: %s (kb)' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     if self.root is None:
-      self.root = Node('0', len(self.vidid_to_idx), len(self.vidid_frameid_to_idx), None)
+      # initialize tree
+      self.root = Node('0', len(self.vidid_to_idx), len(self.vidid_frameid_to_idx), None, \
+                       LATENT_CODE_SIZE, GAMMA)
+      BF = 4
+      l1_nodes = []
+      for n in range(BF):
+        node_tmp = Node('0-'+str(n), len(self.vidid_to_idx), len(self.vidid_frameid_to_idx), \
+                        self.root, LATENT_CODE_SIZE, GAMMA)
+        l1_nodes.append(node_tmp)
+      l2_nodes = []
+      for n in range(BF*BF):
+        parent = l1_nodes[n/BF]
+        node_tmp = Node(parent.node_id+'-'+str(n%BF), len(self.vidid_to_idx), \
+                        len(self.vidid_frameid_to_idx), parent, LATENT_CODE_SIZE, GAMMA)
+        l2_nodes.append(node_tmp)
+      '''
+      l3_nodes = []
+      for n in range(BF*BF*BF):
+        parent = l2_nodes[n/BF]
+        node_tmp = Node(parent.node_id+'-'+str(n%BF), len(self.vidid_to_idx), \
+                        len(self.vidid_frameid_to_idx), parent, LATENT_CODE_SIZE, GAMMA)
+        l3_nodes.append(node_tmp)
+      l4_nodes = []
+      for n in range(BF*BF*BF*BF):
+        parent = l3_nodes[n/BF]
+        node_tmp = Node(parent.node_id+'-'+str(n%BF), len(self.vidid_to_idx), \
+                        len(self.vidid_frameid_to_idx), parent, LATENT_CODE_SIZE, GAMMA)
+        l4_nodes.append(node_tmp)
+      '''
+      # mark all internal nodes
+      self.root.isLeafNode = False
+      self.root.children = l1_nodes
+      for i, l in enumerate(l1_nodes):
+        l.isLeafNode = False
+        l.children = l2_nodes[BF*i: BF*(i+1)]
+      '''
+      for i, l in enumerate(l2_nodes):
+        l.isLeafNode = False
+        l.children = l3_nodes[BF*i: BF*(i+1)]
+      for i, l in enumerate(l3_nodes):
+        l.isLeafNode = False
+        l.children = l4_nodes[BF*i: BF*(i+1)]
+      '''
       # precompute clusters for different K
       K = 2
-      while K < 500:
+      while K < 3:
+        print 'kmeans1 Memory usage: %s (kb)' % \
+               resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         kmeans_model = MiniBatchKMeans(n_clusters = K).fit(latent_codes_matrix)
+        print 'kmeans2 Memory usage: %s (kb)' % \
+               resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         labels = kmeans_model.labels_
-        ss = silhouette_samples(latent_codes_matrix, labels)
+        print 'kmeans3 Memory usage: %s (kb)' % \
+               resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        #ss = silhouette_samples(latent_codes_matrix, labels)
+        print 'kmeans4 Memory usage: %s (kb)' % \
+               resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         self.kmeans_models[K] = kmeans_model
         self.kmeans_labels[K] = labels
-        self.kmeans_ss[K] = ss
+        print 'kmeans5 Memory usage: %s (kb)' % \
+               resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         print K
         #print K, ss, np.mean(ss * node.phi)
+        print 'kmeans6 Memory usage: %s (kb)' % \
+               resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         K *= 2
-    for iteration in range(10):
+    for iteration in range(1):
       print 'Var inf iter ' + str(iteration)
+      print 'Memory usage: %s (kb)' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+      #raw_input()
       self.compute_sigma_alpha(latent_codes_matrix)
-      print 'sigma alpha computed'
+      print 'var inf 1'
+      print 'Memory usage: %s (kb)' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+      #raw_input()
       self.compute_gamma()
-      print 'gamma computed'
+      print 'var inf 2'
+      print 'Memory usage: %s (kb)' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+      #raw_input()
       self.compute_phi(latent_codes_matrix)
-      print 'phi computed'
+      print 'var inf 3'
+      print 'Memory usage: %s (kb)' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+      #raw_input()
       self.print_phi(self.root)
+      print 'var inf 4'
+      print 'Memory usage: %s (kb)' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+      #raw_input()
       print 'phi printed'
-      self.print_gamma(self.root)
-      print 'gamma printed'
-      raw_input()
-      print 'read input'
+      #self.print_gamma(self.root)
+      #print 'gamma printed'
+    print 'before split'
+    #raw_input()
     split = self.split_nodes(self.root, latent_codes_matrix, \
-                             STDEV_THR + 100.0 * np.exp(-self.decay_coeff))
+                             STDEV_THR + 100.0 * np.exp(-1.0*self.decay_coeff))
+    #split = False
+    merge = self.merge_nodes(self.root, latent_codes_matrix, \
+                             STDEV_THR + 100.0 * np.exp(-1.0*self.decay_coeff))
+    print 'after split'
+    #raw_input()
     if split:
       self.decay_coeff = 0.0
+      self.print_phi(self.root)
     else:
       self.decay_coeff += 1.0
 
   def print_phi(self, node):
     if node.isLeafNode:
       #print 'phi', node.node_id, np.mean(node.phi, axis=0), node.phi
-      print 'phi', node.node_id, np.mean(node.phi, axis=0)
+      print 'phi', node.node_id, np.mean(node.phi)
     else:
       for c in node.children:
         self.print_phi(c)
@@ -121,34 +194,51 @@ class VarInf(object):
       if node.gamma is None:
         print 'gamma', node.node_id, node.gamma, node.gamma
       else:
-        #print 'gamma', node.node_id, np.mean(node.gamma, axis=0), node.gamma
-        print 'gamma', node.node_id, np.mean(node.gamma, axis=0)
+        print 'gamma', node.node_id, np.mean(node.gamma, axis=0), node.gamma
+        #print 'gamma', node.node_id, np.mean(node.gamma, axis=0)
     else:
       for c in node.children:
         self.print_gamma(c)
 
+  def merge_nodes(self, node, latent_codes_matrix, split_thr):
+    print 'merge_nodes', node.node_id
+    if node.isLeafNode:
+      if np.mean(node.phi) < 10**-3:
+        print 'Removing node ', node.node_id
+        node.parent.children.remove(node)
+        #return True
+      #else:
+      #  return False
+    else:
+      '''
+      remove_children = []
+      for c in node.children:
+        remove_children.append(self.merge_nodes(c, latent_codes_matrix, split_thr))
+      node.children = map(lambda (x, y): x, filter(lambda (x, y): y, \
+                          zip(node.children, remove_children)))
+      '''
+      for c in node.children:
+        self.merge_nodes(c, latent_codes_matrix, split_thr)
+      if len(node.children) == 0:
+        node.isLeafNode = True
+
   def split_nodes(self, node, latent_codes_matrix, split_thr):
+    print 'split_nodes', node.node_id
     if node.isLeafNode:
       # compute variance
       #stdev = np.sqrt(np.linalg.norm(node.phi * latent_codes_matrix - node.alpha) \
       #                / np.sum(node.phi))
-      #stdev = np.sqrt(np.linalg.norm(np.sqrt(node.phi) * (latent_codes_matrix - node.alpha)) \
-      #                / np.sum(node.phi))
-      #print stdev, split_thr
-      print node.node_id, np.mean(node.phi), split_thr
-      #if stdev > split_thr:
-      if np.mean(node.phi) > split_thr:
-        #raw_input()
-        best_K = -1
-        best_K_score = -np.inf
-        K = 2
-        while K < 500:
-          score = np.mean(self.kmeans_ss[K] * node.phi)
-          print K, score
-          if score > best_K_score:
-            best_K, best_K_score = K, score
-          K *= 2
-        print best_K, best_K_score
+      if np.mean(node.phi) < 10**-2:
+        return False
+      stdev = np.sqrt(np.linalg.norm(np.sqrt(node.phi) * (latent_codes_matrix - node.alpha)) \
+                      / np.sum(node.phi))
+      print node.node_id, stdev, split_thr
+      #print node.node_id, np.mean(node.phi), split_thr
+      if stdev > split_thr:
+      #if 1==0:
+      #if np.mean(node.phi) > split_thr:
+        best_K = 4
+        '''
         labels = self.kmeans_labels[best_K]
         centers = []
         for l in np.unique(labels):
@@ -157,21 +247,27 @@ class VarInf(object):
                          np.sum(node.phi[np.where(labels==l)]))
           #print centers
           print np.shape(centers)
+        '''
         node.isLeafNode = False
         for k in range(best_K):
           new_node = Node(node.node_id + '-' + str(k), \
-                          len(self.vidid_to_idx), len(self.vidid_frameid_to_idx), node)
+                          len(self.vidid_to_idx), len(self.vidid_frameid_to_idx), node, \
+                          LATENT_CODE_SIZE, GAMMA)
           #new_node.alpha = centers[k]
-          new_node.alpha = np.random.normal(size=LATENT_CODE_SIZE)
+          new_node.alpha = node.alpha + 0.1 * np.random.normal(size=LATENT_CODE_SIZE)
           new_node.sigmasqr_inv = node.sigmasqr_inv
           new_node.phi = node.phi / best_K
+          new_node.phi = np.random.rand(len(self.vidid_frameid_to_idx), 1)
           node.children.append(new_node)
+        #self.compute_phi(latent_codes_matrix)
+        #self.print_phi(self.root)
+        #raw_input()
         return True
       #raw_input()
     else:
       result = False
       for c in node.children:
-        result = result or self.split_nodes(c, latent_codes_matrix, split_thr)
+        result = self.split_nodes(c, latent_codes_matrix, split_thr) or result
       return result
 
   def compute_sigma_alpha_node(self, node, latent_codes_matrix):
@@ -179,10 +275,13 @@ class VarInf(object):
       sum_phi = np.sum(node.phi)
       sum_phi_z = np.sum(node.phi * latent_codes_matrix, axis=0)
       node.sigmasqr_inv = SIGMA_B_sqrinv + sum_phi * SIGMA_Z_sqrinv
+      print node.node_id, SIGMA_B_sqrinv, sum_phi, SIGMA_Z_sqrinv, node.sigmasqr_inv
+      #if node.node_id == '0-0' or node.node_id == '0-1':
+      #  raw_input()
       try:
-        node.alpha = node.parent.alpha
+        node.alpha = deepcopy(node.parent.alpha)
       except AttributeError:
-        node.alpha = ALPHA
+        node.alpha = deepcopy(ALPHA)
       node.alpha = (node.alpha * SIGMA_B_sqrinv + sum_phi_z * SIGMA_Z_sqrinv) \
                    / node.sigmasqr_inv
     else:
@@ -192,9 +291,9 @@ class VarInf(object):
         self.compute_sigma_alpha_node(c, latent_codes_matrix)
       node.sigmasqr_inv = (1.0 + len(node.children)) * SIGMA_B_sqrinv
       try:
-        node.alpha = node.parent.alpha
+        node.alpha = deepcopy(node.parent.alpha)
       except AttributeError:
-        node.alpha = ALPHA
+        node.alpha = deepcopy(ALPHA)
       for c in node.children:
         node.alpha += c.alpha
       node.alpha = node.alpha * SIGMA_B_sqrinv / node.sigmasqr_inv
@@ -223,12 +322,14 @@ class VarInf(object):
                      1.0 / node.sigmasqr_inv)
       for i in range(len(self.vidid_frameid_to_idx)):
         vidid, frameid = self.vidid_frameid_to_idx[i]
-        #print np.shape(gamma_sum_on[self.vidid_to_idx.index(vidid)])
-        #print np.shape(gamma_sum_before[self.vidid_to_idx.index(vidid)])
-        #print np.shape(scaled_dist[i])
+        #print node.node_id, i,
+        #print (gamma_sum_on[self.vidid_to_idx.index(vidid)]),
+        #print (gamma_sum_before[self.vidid_to_idx.index(vidid)]),
+        #print node.node_id, i, (scaled_dist[i])
+        #print (node.sigmasqr_inv)
         #print i, np.shape(node.phi[i]),
         node.phi[i] = gamma_sum_on[self.vidid_to_idx.index(vidid)] + \
-                      gamma_sum_before[self.vidid_to_idx.index(vidid)] + \
+                      gamma_sum_before[self.vidid_to_idx.index(vidid)] - \
                       scaled_dist[i]
         #print np.shape(node.phi[i])
       #return VarInf.digamma_add1(gamma_sum_before, node.gamma)
@@ -384,4 +485,18 @@ class VarInf(object):
     fileptr = open(filename, 'w')
     self.write_sigma_node(self.root, fileptr)
     fileptr.close()
-      
+
+  def get_nodes_list(self, node, result):
+    if node.isLeafNode:
+      result.append(node)
+    else:
+      result.append(node)
+      for c in node.children:
+        result = self.get_nodes_list(c, result)
+    return result
+
+  def write_nodes(self, filename):
+    nodes_list = self.get_nodes_list(self.root, [])
+    fileptr = open(filename, 'wb')
+    cPickle.dump(nodes_list, fileptr)
+    fileptr.close()
