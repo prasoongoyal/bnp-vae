@@ -13,7 +13,8 @@ class Data(object):
     self.data = np.load(data_file)
     self.metadata = self.prepare_data()
     #print self.metadata
-    self.one_epoch_completed = False
+    #self.one_epoch_completed = False
+    self.epochs_completed = 0
 
     self.batch_start_idx = 0
 
@@ -41,7 +42,7 @@ class Data(object):
     self.batch_start_idx += self.batch_size
     if (self.batch_start_idx >= len(self.metadata)):
       self.batch_start_idx = 0
-      self.one_epoch_completed = True
+      self.epochs_completed += 1
       #self.metadata = np.random.permutation(self.data)
       np.random.shuffle(self.metadata)
     # load images and preprocess
@@ -50,7 +51,7 @@ class Data(object):
     data_indices = map(lambda x: x[0], curr_batch)
     batch = self.data[data_indices, :]
     batch_annot = map(lambda x: (x[1], x[2]), curr_batch)
-    return batch, batch_annot, self.one_epoch_completed
+    return batch, batch_annot, self.epochs_completed
 
   # gets image filename formatted as "path/to/dir/vid<vidid>_f<frameid>.jpg"
   @staticmethod

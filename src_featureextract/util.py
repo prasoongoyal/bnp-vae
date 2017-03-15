@@ -5,9 +5,10 @@ import functools
 from functional import partial, compose
 import tensorflow as tf
 import sys
+import resource
 
 batch_size = eval(sys.argv[6])
-LATENT_CODE_SIZE = eval(sys.argv[5])
+LATENT_CODE_SIZE = 32
 IMG_DIM = {'width': 224, 'height': 224, 'channels': 3}
 BRANCHING_FACTOR = eval(sys.argv[3])
 NUM_LEVELS = eval(sys.argv[4])

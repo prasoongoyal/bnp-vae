@@ -12,6 +12,7 @@ class VarInf(object):
                          np.ones(shape=(NUM_NODES, LATENT_CODE_SIZE))
     self.gamma = {}
     self.phi = {}
+    self.phi_coeff = 0.00001
 
     self.edges_on_path = []
     self.edges_before_path = []
@@ -23,6 +24,7 @@ class VarInf(object):
     true_path_mu_batch = []
     for x_annot in x_annot_batch:
       (vidid, frameid) = x_annot
+      not_found = False
       # get distributions over path
       try:
         path_prob = self.phi[vidid][frameid]
@@ -30,57 +32,81 @@ class VarInf(object):
         #path_prob = [1.0 / NUM_PATHS] * NUM_PATHS
         path_prob = np.random.random(size=NUM_PATHS)
         path_prob = path_prob / np.sum(path_prob)
-      '''
-      try:
-        _ = self.phi[vidid]
-        mult_factor = np.ones(shape=(NUM_PATHS))
-        for f in self.phi[vidid]:
-          if (eval(f) < eval(frameid)):
-            # reduce probability of highest prob path
-            max_prob_path = np.argmax(self.phi[vidid][f])
-            for p in range(max_prob_path):
-              mult_factor[p] = eval(sys.argv[7])
-        path_prob = path_prob * mult_factor
-        path_prob = path_prob / np.sum(path_prob)
-      except KeyError:
-        pass
-      '''
+        not_found = True
       true_path_idx = NUM_INTERNAL_NODES + np.random.choice(NUM_PATHS, p=path_prob)
       true_path_mu = np.random.multivariate_normal(self.alpha[true_path_idx], 
                                       np.diag(1.0 / self.sigmasqr_inv[true_path_idx]))
       #true_path_idx = NUM_INTERNAL_NODES + np.argmax(path_prob)
       #true_path_mu = self.alpha[true_path_idx]
-      true_path_mu_batch.append(np.squeeze(true_path_mu))
+      if not_found:
+        true_path_mu_batch.append(np.zeros(shape=LATENT_CODE_SIZE))
+      else:
+        true_path_mu_batch.append(np.squeeze(true_path_mu))
     return np.asarray(true_path_mu_batch)
 
-  def update_variational_parameters(self, latent_codes):
+  def update_variational_parameters(self, latent_codes, epochs_completed):
     print 'Performing variational inference...'
     for iteration in range(1):
+      #print 'updating params ', iteration
       sum_phi_z, sum_phi = self.compute_sums(latent_codes)
       self.compute_sigma(sum_phi_z, sum_phi)
       self.compute_alpha(sum_phi_z, sum_phi)
       self.compute_gamma(latent_codes)
-      self.compute_phi(latent_codes)
-   
+      self.compute_phi(latent_codes, epochs_completed)
+      #print 1.0 - 0.9**epochs_completed
+      #raw_input()
+    #self.phi_coeff = min(1.0, 2.0 * self.phi_coeff)
+    return
+    path_counts = NUM_PATHS * [0]
+    for v in latent_codes:
+      for f in latent_codes[v]:
+        z_mn = latent_codes[v][f]
+        dist2alphas = np.linalg.norm(z_mn - self.alpha[NUM_INTERNAL_NODES:], axis=1)
+        path_counts[int(np.argmin(dist2alphas))] += 1
+    print path_counts
+    path_counts = NUM_PATHS * [0]
+    for v in latent_codes:
+      for f in latent_codes[v]:
+        z_mn = latent_codes[v][f]
+        dist2alphas = np.linalg.norm((z_mn - self.alpha[NUM_INTERNAL_NODES:]), axis=1)
+        path_counts[int(np.argmin(dist2alphas))] += 1
+    print path_counts
+
   def compute_sums(self, latent_codes):
+    #print self.phi
     sum_phi_z = NUM_PATHS * [0.0]
     sum_phi = NUM_PATHS * [0.0]
+    #path_freq = NUM_PATHS * [0.0]
+    #print 'alphas', self.alpha[NUM_INTERNAL_NODES:]
     for vidid in latent_codes:
       for frameid in latent_codes[vidid]:
         z_mn = latent_codes[vidid][frameid]
         try:
           phi_mn = self.phi[vidid][frameid]
-        except:
+        except KeyError:
           # initialize phi
-          dist2alphas = np.linalg.norm(z_mn - self.alpha[NUM_INTERNAL_NODES:], axis=1)
+          dist2alphas = np.linalg.norm((z_mn - self.alpha[NUM_INTERNAL_NODES:]), axis=1)
+          #print 'z_mn ', z_mn
+          #print 'dist', dist2alphas
           phi_mn = np.zeros(shape=NUM_PATHS)
           phi_mn[np.argmin(dist2alphas)] = 1.0
+          try:
+            _ = self.phi[vidid]
+          except KeyError:
+            self.phi[vidid] = {}
+          self.phi[vidid][frameid] = phi_mn
+          #print phi_mn
         for i in range(NUM_PATHS):
           sum_phi_z[i] += phi_mn[i] * z_mn
           sum_phi[i] += phi_mn[i]
+    #print sum_phi
+    #print sum_phi_z
     return sum_phi_z, sum_phi
 
   def compute_alpha(self, sum_phi_z, sum_phi):
+    #print 'initial alpha'
+    #for i, a in enumerate(self.alpha):
+    #  print i, a
     for i in reversed(range(NUM_NODES)):
       if i >= NUM_INTERNAL_NODES:
         # leaf node
@@ -88,22 +114,34 @@ class VarInf(object):
         self.alpha[i] = (SIGMA_B_sqrinv * self.alpha[parent_i] +
                         sum_phi_z[i- NUM_INTERNAL_NODES] * SIGMA_Z_sqrinv) \
                         / self.sigmasqr_inv[i]
+        #self.alpha[i] = (sum_phi_z[i- NUM_INTERNAL_NODES] * SIGMA_Z_sqrinv) \
+        #                / self.sigmasqr_inv[i]
       else:
         # internal node
         parent_i = VarInf.get_parent(i)
         children_i = VarInf.get_children(i)
-        self.alpha[i] = self.alpha[parent_i] if i > 0 else  ALPHA
+        self.alpha[i] = self.alpha[parent_i] if i > 0 else ALPHA
         for c in children_i:
           self.alpha[i] += self.alpha[c]
         self.alpha[i] /= (1.0 + BRANCHING_FACTOR)
+    #print 'final alpha'
+    #for i, a in enumerate(self.alpha):
+    #  print i, a
 
   def compute_sigma(self, sum_phi_z, sum_phi):
+    #print 'initial sigma'
+    #for i, a in enumerate(self.sigmasqr_inv):
+    #  print i, a
     for i in reversed(range(NUM_NODES)):
       if i >= NUM_INTERNAL_NODES:
         # leaf node
         parent_i = VarInf.get_parent(i)
         self.sigmasqr_inv[i] = SIGMA_B_sqrinv +  \
                               sum_phi[i - NUM_INTERNAL_NODES] * SIGMA_Z_sqrinv
+        #self.sigmasqr_inv[i] = sum_phi[i - NUM_INTERNAL_NODES] * SIGMA_Z_sqrinv
+    #print 'final sigma'
+    #for i, a in enumerate(self.sigmasqr_inv):
+    #  print i, a
 
   def compute_gamma(self, latent_codes):
     for vidid in latent_codes:
@@ -125,8 +163,8 @@ class VarInf(object):
             gamma_m[j][1] += phi_mn[i]
       self.gamma[vidid] = gamma_m
 
-  def compute_phi(self, latent_codes):
-    norm_sigma = np.sum(1.0 / self.sigmasqr_inv[NUM_INTERNAL_NODES:], axis=1)
+  def compute_phi(self, latent_codes, epochs_completed):
+    norm_sigma = np.mean(1.0 / self.sigmasqr_inv[NUM_INTERNAL_NODES:], axis=1)
     for vidid in latent_codes:
       phi_m = NUM_PATHS * [0.0]
       try:
@@ -148,7 +186,13 @@ class VarInf(object):
           _ = self.phi[vidid]
         except KeyError:
           self.phi[vidid] = {}
-        self.phi[vidid][frameid] = VarInf.normalize(np.exp(phi_mn))
+        #print 'before normalize'
+        #print phi_mn
+        #phi_mn = self.phi_coeff * phi_mn
+        #phi_mn = (1.0 - 0.9**epochs_completed) * phi_mn
+        self.phi[vidid][frameid] = VarInf.normalize(np.exp(phi_mn - np.max(phi_mn)))
+        #print 'after normalize'
+        #print self.phi[vidid][frameid]
 
   @staticmethod
   def normalize(p):
@@ -199,7 +243,7 @@ class VarInf(object):
                   unicode(np.argmax(self.phi[vidid][frameid])) + '\n')
 
   def write_alpha(self, filename):
-    np.savetxt(filename, self.alpha)
+    np.savetxt(filename, self.alpha, fmt='%.2f')
   def write_sigma(self, filename):
-    np.savetxt(filename, self.sigmasqr_inv)
+    np.savetxt(filename, self.sigmasqr_inv, fmt='%.2f')
       

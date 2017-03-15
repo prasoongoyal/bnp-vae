@@ -35,7 +35,8 @@ class Model(object):
     (self.x_in, self.mu_in, self.log_sigma_in, self.z, self.z_mean, 
      self.z_log_sigma, self.x_reconstructed, 
      self.rec_cost_mean, self.kl_cost_mean, self.cost, self.global_step, 
-     self.train_op, self.grads, self.valid_data, self.valid_rec) = handles
+     self.train_op, self.grads, self.valid_data, self.valid_rec, self.t1, 
+     self.t2, self.t3) = handles
     
     #self.vgg_net.load_weights(self.session)
 
@@ -61,7 +62,7 @@ class Model(object):
     #FC_SIZES = [int(np.prod(final_size)), 1024, 1024, 1024, 1024, 1024, 1024]
     #FC_SIZES = [4096, 1024, 1024, 1024, 1024, 1024, 1024]
     #FC_SIZES = [4096, 1024, 256, 64]
-    FC_SIZES = [4096, 256, LATENT_CODE_SIZE]
+    FC_SIZES = [4096, LATENT_CODE_SIZE]
     # network inputs
     x_in = tf.placeholder(tf.float32, shape=[None, 4096], 
                           name='x')
@@ -77,19 +78,21 @@ class Model(object):
     #x_scaled = tf.tanh(x_in)
     with tf.device('/gpu:0'):
       # subtract mean
-      nonlinearity_list = [tf.nn.softsign] * (len(FC_SIZES)-1)
       #nonlinearity_list = [tf.nn.tanh] * (len(FC_SIZES))
-      #nonlinearity_list[-1] = tf.identity
+      nonlinearity_list_m = [tf.identity] * (len(FC_SIZES)-1)
+      nonlinearity_list_m[-1] = tf.nn.softsign
+      nonlinearity_list_s = [tf.identity] * (len(FC_SIZES)-1)
+      nonlinearity_list_s[-1] = tf.nn.softsign
       enc_fc_layers_m = [Dense_NoShare('fc_m'+str(fc_id), output_size, dropout, non_lin)
 		         for (fc_id, output_size, non_lin) in 
-                         zip(range(len(FC_SIZES)-1), FC_SIZES[1:], nonlinearity_list)]
+                         zip(range(len(FC_SIZES)-1), FC_SIZES[1:], nonlinearity_list_m)]
       enc_fc_layers_s = [Dense_NoShare('fc_s'+str(fc_id), output_size, dropout, non_lin)
 		         for (fc_id, output_size, non_lin) in 
-                         zip(range(len(FC_SIZES)-1), FC_SIZES[1:], nonlinearity_list)]
-      enc_fc_layers = [Dense_NoShare('fc'+str(fc_id), output_size, dropout, non_lin)
-		         for (fc_id, output_size, non_lin) in 
-                         zip(range(len(FC_SIZES)-1), FC_SIZES[1:], nonlinearity_list)]
-      x_encoded = composeAll(reversed(enc_fc_layers))(x_in)
+                         zip(range(len(FC_SIZES)-1), FC_SIZES[1:], nonlinearity_list_s)]
+      #enc_fc_layers = [Dense_NoShare('fc'+str(fc_id), output_size, dropout, non_lin)
+      #		        for (fc_id, output_size, non_lin) in 
+      #                 zip(range(len(FC_SIZES)-1), FC_SIZES[1:], nonlinearity_list)]
+      #x_encoded = composeAll(reversed(enc_fc_layers))(x_in)
       #z_mean = composeAll(reversed(enc_fc_layers_m))(x_in)
       #z_log_sigma = composeAll(reversed(enc_fc_layers_s))(x_in)
 
@@ -103,8 +106,8 @@ class Model(object):
       z = self.sampleGaussian(z_mean, z_log_sigma, global_step)
 
       # project back to VGG fc dimension
-      z_proj_layer = Dense_NoShare('z_proj', FC_SIZES[-1], 1.0, tf.nn.softsign)
-      z_proj = (z_proj_layer)(z)
+      #z_proj_layer = Dense_NoShare('z_proj', FC_SIZES[-1], 1.0, tf.nn.softsign)
+      #z_proj = (z_proj_layer)(z)
       #z_proj = tf.identity(x_encoded)
       #z_proj = tf.identity(z_mean)
 
@@ -114,12 +117,29 @@ class Model(object):
       dec_fc_layers = [Dense_NoShare('fc'+str(fc_id), output_size, dropout, nonlin)
                        for (fc_id, output_size, nonlin) in zip(range(len(FC_SIZES[:-1])), 
                        FC_SIZES[:-1], nonlinearity_list)]
-      x_reconstructed = composeAll(dec_fc_layers)(z_proj)
- 
+      x_reconstructed = composeAll(dec_fc_layers)(z)
+      #bias1 = tf.cast(tf.Variable(1, trainable=True, name='b1'), tf.float32)
+      #bias2 = tf.cast(tf.Variable(1, trainable=True, name='b2'), tf.float32)
+      #enc_fc = Dense_NoShare('enc_fc', LATENT_CODE_SIZE, 1.0, tf.nn.softsign)
+      #dec_fc = Dense_NoShare('dec_fc', 4096, 1.0, tf.sigmoid)
+      #bias1 = tf.Variable(tf.zeros([LATENT_CODE_SIZE]), trainable=True, name='b1')
+      #bias2 = tf.Variable(tf.zeros([4096]), trainable=True, name='b2')
+      #z_proj = (enc_fc)(x_in)
+      #x_reconstructed = (dec_fc)(z_proj)
+
+      #z_proj = x_in + bias1
+      #x_reconstructed = z_proj + bias2
+
       v_mean = composeAll(reversed(enc_fc_layers_m))(valid_data, 1.0)
       v_lgs = composeAll(reversed(enc_fc_layers_s))(valid_data, 1.0)
       v = self.sampleGaussian(v_mean, v_lgs, global_step)
-      v_rec = composeAll(dec_fc_layers)((z_proj_layer)(v, 1.0), 1.0)
+      #v_rec = composeAll(dec_fc_layers)((z_proj_layer)(v, 1.0), 1.0)
+      v_rec = composeAll(dec_fc_layers)(v, 1.0)
+
+      #v_proj = valid_data + bias1
+      #v_rec = v_proj + bias2
+      #v_proj = (enc_fc)(valid_data)
+      #v_rec = (dec_fc)(v_proj)
       #v = composeAll(reversed(enc_fc_layers))(valid_data)
       #v_rec = composeAll(dec_fc_layers)(v)
  
@@ -129,16 +149,19 @@ class Model(object):
 
       #rec_loss = Model.l2_loss(x_reconstructed, x_in)
       rec_loss = Model.l2_loss(x_reconstructed, x_in)
-      kl_loss = Model.kl_loss(z_mean, z_log_sigma, mu_in, log_sigma_in)
+      sigma_coeff = 1.0 + tf.train.exponential_decay(100.0, global_step, 1000, 0.5, staircase=True)
+      kl_loss, t1, t2, t3 = Model.kl_loss(z_mean, z_log_sigma, mu_in, log_sigma_in)
+      #kl_loss = Model.emd_loss(z_mean, z_log_sigma, mu_in, log_sigma_in)
       reg_loss = Model.l2_reg(tf.trainable_variables())
 
 
     with tf.name_scope('rec_cost_mean'):
       rec_cost_mean = tf.reduce_mean(rec_loss)
 
+    '''
     with tf.name_scope('kl_cost_mean'):
       kl_cost_mean = tf.reduce_mean(kl_loss)
-
+    '''
     #with tf.name_scope()
 
     with tf.name_scope('cost'):
@@ -149,10 +172,8 @@ class Model(object):
                             name='vae_cost')
       '''
       kl_coeff = 1.0 - tf.train.exponential_decay(1.0, global_step, 1000, \
-                 0.97, staircase=True)
-      cost = tf.reduce_mean(1000.0 * rec_loss + \
-                            kl_coeff * kl_loss + \
-                            0.0 * reg_loss,
+                 0.95, staircase=True)
+      cost = tf.reduce_mean(1.0 * rec_loss + eval(sys.argv[5]) * kl_loss,
                             name='vae_cost')
       
     # optimization
@@ -163,7 +184,7 @@ class Model(object):
       optimizer_coldstart = tf.train.RMSPropOptimizer(learning_rate)
       #optimizer_warmstart = tf.train.AdamOptimizer(10.0**-eval(sys.argv[6]))
       tvars = tf.trainable_variables()
-      #print tvars
+      print tvars
       #for (i, v) in enumerate(tvars):
       #  print v.name, type(v.name), v.device
       #print len(tvars)
@@ -176,12 +197,13 @@ class Model(object):
       #print len(tvars)
       grads_and_vars_coldstart = optimizer_coldstart.compute_gradients(cost, tvars_coldstart, 
                        colocate_gradients_with_ops=True)
-      #for (g, v) in grads_and_vars_coldstart:
-      #  print g.name, v.name
+      for (g, v) in grads_and_vars_coldstart:
+        print g, v.name
+        #print g.name, v.name
       #raw_input()
-      clipped = [(tf.clip_by_value(grad, -1, 1), tvar) # gradient clipping
+      clipped = [(tf.clip_by_value(grad, -0.01, 0.01), tvar) # gradient clipping
                  for grad, tvar in grads_and_vars_coldstart]
-      grads = map(lambda (x, y): x, grads_and_vars_coldstart)
+      grads = map(lambda (x, y): x, clipped)
       train_op_cs = optimizer_coldstart.apply_gradients(clipped, 
                                  global_step=global_step, name='minimize_cost')
       #grads_and_vars_warmstart = optimizer_warmstart.compute_gradients(cost, tvars_warmstart, 
@@ -189,9 +211,15 @@ class Model(object):
       #train_op_ws = optimizer_warmstart.apply_gradients(grads_and_vars_warmstart, 
       #                           global_step=global_step, name='minimize_cost')
 
+    #return (x_in, mu_in, log_sigma_in, z, z_mean, z_log_sigma,
+    #        x_reconstructed, rec_cost_mean, tf.Variable(0), cost, global_step, train_op_cs,
+    #        grads, valid_data, v_rec, tf.Variable(0), tf.Variable(0), tf.Variable(0))
     return (x_in, mu_in, log_sigma_in, z, z_mean, z_log_sigma,
-            x_reconstructed, rec_cost_mean, kl_cost_mean, cost, global_step, train_op_cs,
-            grads, valid_data, v_rec)
+            x_reconstructed, rec_cost_mean, kl_loss, cost, global_step, train_op_cs,
+            grads, valid_data, v_rec, t1, t2, t3)
+    #return (x_in, mu_in, log_sigma_in, z, z_mean, z_log_sigma,
+    #        x_reconstructed, rec_cost_mean, kl_cost_mean, cost, global_step, train_op_cs,
+    #        grads, valid_data, v_rec)
     
   def train(self, train_data, max_iter=np.inf, max_epochs=np.inf, outdir='./out'):
     saver = tf.train.Saver(tf.all_variables())
@@ -217,10 +245,10 @@ class Model(object):
       iteration = 0
       while True:
         if (iteration % 1000 == 999):
-          valid_size = 2048
+          valid_size = 32
         else:
           valid_size = 8
-        x, x_annot, one_epoch_completed = train_data.get_next_batch()
+        x, x_annot, epochs_completed = train_data.get_next_batch()
         mu_true_path = var_inf.get_true_path_mean(x_annot)
         batch_size = np.size(x, 0)
         log_sigma_true_path = np.log(SIGMA_Z) * np.ones(shape=(batch_size, 1))
@@ -228,17 +256,19 @@ class Model(object):
                      self.mu_in: mu_true_path,
                      self.log_sigma_in: log_sigma_true_path,
                      self.valid_data: valid_data[-valid_size:, :]}
+        #feed_dict = {self.x_in: x, 
+        #             self.mu_in: np.zeros(shape=(batch_size, LATENT_CODE_SIZE)),
+        #             self.log_sigma_in: np.zeros(shape=(batch_size, 1)),
+        #             self.valid_data: valid_data[-valid_size:, :]}
         fetches = [self.z, self.z_mean, self.z_log_sigma, 
                    self.x_reconstructed, self.rec_cost_mean,
                    self.kl_cost_mean, self.cost, self.global_step, self.train_op, self.grads,
-                   self.valid_rec]
+                   self.valid_rec, self.t1, self.t2, self.t3]
 
         (z, z_mean, z_log_sigma, x_reconstructed, rec_cost_mean, 
-         kl_cost_mean, cost, iteration, _, grads, valid_rec) = \
+         kl_cost_mean, cost, iteration, _, grads, valid_rec, t1, t2, t3) = \
                     self.session.run(fetches, feed_dict)
-
         '''
-        print len(grads)
         for g in grads:
           if np.mean(g) == 0.0:
             continue
@@ -248,30 +278,29 @@ class Model(object):
             print 'large gradient'
             raw_input()
         '''
-
         if (iteration % 1 == 0):
+          bins, freq = np.histogram(t2)
           print iteration, Model.get_correct(x, x_reconstructed), \
                            Model.get_correct(valid_data[-valid_size:, :], valid_rec), \
+                           np.min(t1), np.min(t2), np.min(t3), \
+                           np.max(t1), np.max(t2), np.max(t3), \
+                           np.size(t1), np.size(t2), np.size(t3), \
+                           np.min(z_mean), np.max(z_mean), \
+                           np.min(z_log_sigma), np.max(z_log_sigma), \
                            Model.grad_norm(grads)
-          
-           #raw_input()
-          '''
-          #predict on validation data
-          feed_dict = {self.x_in: valid_data[-2048:, :]}
-          fetches = [self.z, self.z_mean, self.z_log_sigma, self.x_encoded,
-                     self.x_reconstructed]
-          (z, z_mean, z_log_sigma, x_encoded, x_reconstructed) = \
-                      self.session.run(fetches, feed_dict)
-          '''
+                           #np.linalg.norm(t1), np.linalg.norm(t2), np.linalg.norm(t3)
+          print 'Memory usage: %s (kb)' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
         self.update_latent_codes(z, x_annot)
 
         # update variational parameters periodically and save current state
-        if iteration%1000 == 0:
+        if iteration%1325 == 0:
+        #if epochs_completed > 0:
           saver.save(self.session, os.path.join(self.output_dir, 'model'), 
                      global_step = iteration)
           self.write_latent_codes(os.path.join(self.output_dir, 
                                                'z_'+unicode(iteration)+'.txt'))
-          var_inf.update_variational_parameters(self.latent_codes)
+          var_inf.update_variational_parameters(self.latent_codes, epochs_completed)
           var_inf.write_alpha(os.path.join(self.output_dir, 
                                            'alpha_'+unicode(iteration)+'.txt'))
           var_inf.write_sigma(os.path.join(self.output_dir, 
@@ -331,7 +360,7 @@ class Model(object):
     print 'model loaded'
     all_z = np.zeros(shape=(0, 2 + LATENT_CODE_SIZE))
     while True:
-      x, x_annot, one_epoch_completed = data.get_next_batch()
+      x, x_annot, epochs_completed = data.get_next_batch()
       feed_dict = {self.x_in: x}
       fetches = [self.z, self.z_mean, self.z_log_sigma,
                  self.x_reconstructed]
@@ -340,7 +369,7 @@ class Model(object):
       all_z = np.append(all_z, np.concatenate((x_annot, z), axis=1), axis=0)
       #print z_mean
       #print z_log_sigma
-      if one_epoch_completed == True:
+      if epochs_completed > 0:
         break
     print np.shape(all_z)
     with open(os.path.join(self.output_dir, sys.argv[8]), 'w') as f:
@@ -363,10 +392,10 @@ class Model(object):
     # subject to random noise epsilon
     with tf.name_scope("sample_gaussian"):
       # reparameterization trick
-      sigma_coeff = 1.0 - tf.train.exponential_decay(1.0, global_step, 1000, \
-                    0.97, staircase=True)
+      #sigma_coeff = 1.0 - tf.train.exponential_decay(1.0, global_step, 1000, \
+      #              eval(sys.argv[8]), staircase=True)
       epsilon = tf.random_normal(tf.shape(log_sigma), name="epsilon")
-      return mu + sigma_coeff * epsilon * tf.exp(log_sigma) # N(mu, I * sigma**2)
+      return mu + 1.0 * epsilon * tf.exp(log_sigma) # N(mu, I * sigma**2)
 
   def write_latent_codes(self, filename):
     with open(filename, 'w') as f:
@@ -381,15 +410,27 @@ class Model(object):
                          self.latent_codes[vidid][frameid])) + '\n')
 
   @staticmethod
+  def emd_loss(mu_pred, log_sigma_pred, mu_in, log_sigma_in):
+    # offset = 1e-7
+    with tf.name_scope('emd_loss'):
+      emd_loss = tf.square(mu_pred - mu_in) + \
+                 tf.square(tf.exp(log_sigma_pred) - tf.exp(log_sigma_in))
+      return tf.reduce_sum(emd_loss, axis=1)
+
+  @staticmethod
   def kl_loss(mu_pred, log_sigma_pred, mu_in, log_sigma_in):
     # offset = 1e-7
     with tf.name_scope('kl_loss'):
-      kl_loss = tf.reduce_sum(tf.subtract(log_sigma_in, log_sigma_pred), axis=1)
+      kl_loss = 2.0 * tf.reduce_sum(tf.subtract(log_sigma_in, log_sigma_pred), axis=1)
       mu_diff_scaled = tf.div(tf.subtract(mu_in, mu_pred), tf.exp(log_sigma_in))
+      t1 = kl_loss
       kl_loss = tf.add(kl_loss, tf.reduce_sum(tf.square(mu_diff_scaled), axis=1))
+      t2 = kl_loss  - t1
       kl_loss = tf.add(kl_loss, tf.reduce_sum(tf.div(tf.exp(2.0 * log_sigma_pred), 
                                        tf.exp(2.0 * log_sigma_in)), axis=1))
-      return kl_loss
+      t3 = kl_loss - (t1 + t2)
+      #return tf.maximum(eval(sys.argv[7]), kl_loss), t1, t2, t3
+      return kl_loss, t1, t2, t3
 
   @staticmethod
   def l1_loss(obs, actual):
