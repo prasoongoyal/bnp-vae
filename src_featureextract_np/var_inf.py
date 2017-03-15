@@ -22,6 +22,22 @@ class VarInf(object):
     self.kmeans_labels = {}
     self.kmeans_ss = {}
 
+  @staticmethod
+  def weighted_kmeans(data, weights, K):
+    N = np.size(data, 0)
+    D = np.size(data, 1)
+    # initialize centers
+    centers = np.zeros(shape=(K, D))
+    init_weights = weights / np.sum(weights)
+    closest_cluster_dist = np.ones(shape=N) / N
+    for k in range(K):
+      #idx = np.random.choice(N, p=VarInf.normalize(init_weights * closest_cluster_dist))
+      idx = np.argmax(VarInf.normalize(init_weights * closest_cluster_dist))
+      centers[k, :] = data[idx, :]
+      for n in range(N):
+        closest_cluster_dist[n] = np.min(np.linalg.norm(data[n, :] - centers[:k+1, :], axis=1))
+    return centers
+
   def get_phi_leaves(self, idx):
     result = {}
     unvisited_nodes = [self.root]
@@ -115,9 +131,22 @@ class VarInf(object):
       self.phi_vidid_list = []
       for i in range(len(self.vidid_to_idx)):
         vidid = self.vidid_to_idx[i]
-        self.phi_vidid_list.append(filter(lambda idx: self.vidid_frameid_to_idx[idx][0]==vidid, \
-                                        range(len(self.vidid_frameid_to_idx))))
+        self.phi_vidid_list.append(filter(lambda idx: \
+             self.vidid_frameid_to_idx[idx][0]==vidid, range(len(self.vidid_frameid_to_idx))))
+      #initialize phi to one-hot
+      alpha_leaves = self.get_alpha_leaves()
+      alpha_keys = alpha_leaves.keys()
+      alpha_values = alpha_leaves.values()
+      phi_init = np.zeros(shape=(len(alpha_keys), len(self.vidid_frameid_to_idx)))
+      for i, z in enumerate(latent_codes_matrix):
+        #phi_curr = np.zeros(shape=(len(self.vidid_frameid_to_idx), 1))
+        phi_init[np.argmin(np.linalg.norm(z - alpha_values, axis=1))][i] = 1.0
+      self.initialize_phi(self.root, dict(zip(alpha_keys, phi_init)))
 
+    #print 'Initial values'
+    #print latent_codes_matrix
+    #self.print_all_param_values(self.root)
+    
     for iteration in range(1):
       print 'Var inf iter ' + str(iteration)
       self.compute_sigma_alpha(latent_codes_matrix)
@@ -128,20 +157,57 @@ class VarInf(object):
       print 'var inf 3: {}'.format(datetime.now().isoformat()[11:])
       self.print_phi(self.root)
       print 'var inf 4: {}'.format(datetime.now().isoformat()[11:])
-    return
+    #print 'Final values'
+    #print latent_codes_matrix
+    #self.print_all_param_values(self.root)
+    #raw_input()
+    #return
     print 'before: {}'.format(datetime.now().isoformat()[11:])
     split = self.split_nodes(self.root, latent_codes_matrix, \
                              STDEV_THR + 100.0 * np.exp(-1.0*self.decay_coeff))
+    if split:
+      self.decay_coeff = 0.0
+      self.compute_phi(latent_codes_matrix)
+    else:
+      self.decay_coeff += 1.0
     print 'between: {}'.format(datetime.now().isoformat()[11:])
     merge = self.merge_nodes(self.root, latent_codes_matrix, \
                              STDEV_THR + 100.0 * np.exp(-1.0*self.decay_coeff))
     print 'after: {}'.format(datetime.now().isoformat()[11:])
+    '''
     if split:
-      self.decay_coeff = 0.0
-      self.compute_phi(latent_codes_matrix)
-      self.print_phi(self.root)
+      #self.print_all_param_values(self.root)
+      self.print_stdev(self.root, latent_codes_matrix)
+      raw_input()
     else:
-      self.decay_coeff += 1.0
+      pass
+    '''
+
+  def print_stdev(self, node, latent_codes_matrix):
+    if node.isLeafNode:
+      stdev = np.sqrt(np.linalg.norm(np.sqrt(node.phi) * (latent_codes_matrix - node.alpha)) \
+                      / np.sum(node.phi))
+      print 'STDEV', node.node_id, stdev
+    else:
+      for c in node.children:
+        self.print_stdev(c, latent_codes_matrix)
+
+  def print_all_param_values(self, node):
+    print node.node_id
+    print node.alpha
+    print node.sigmasqr_inv
+    print node.phi
+    print node.gamma
+    if not(node.isLeafNode):
+      for c in node.children:
+        self.print_all_param_values(c)
+
+  def initialize_phi(self, node, init_values):
+    if node.isLeafNode:
+      node.phi = np.reshape(init_values[node.node_id], (len(self.vidid_frameid_to_idx), 1))
+    else:
+      for c in node.children:
+        self.initialize_phi(c, init_values)
 
   def print_phi(self, node):
     if node.isLeafNode:
@@ -172,7 +238,16 @@ class VarInf(object):
       if len(node.children) == 0:
         node.isLeafNode = True
       elif len(node.children) == 1:
-        node = node.children[0]
+        print 'Merge 1 child'
+        #print node.parent.node_id, node.node_id, node.children[0].node_id
+        node.isLeafNode = node.children[0].isLeafNode
+        node.alpha = deepcopy(node.children[0].alpha)
+        node.sigmasqr_inv = node.children[0].sigmasqr_inv
+        node.phi = deepcopy(node.children[0].phi)
+        node.gamma = deepcopy(node.children[0].gamma)
+        node.children = deepcopy(node.children[0].children)
+        for c in node.children:
+          c.parent = node
 
   def split_nodes(self, node, latent_codes_matrix, split_thr):
     print 'split_nodes', node.node_id
@@ -186,13 +261,15 @@ class VarInf(object):
       if stdev > split_thr:
       #if 1==0:
       #if np.mean(node.phi) > split_thr:
-        best_K = 4
+        best_K = eval(sys.argv[3])
         node.isLeafNode = False
+        new_centers = VarInf.weighted_kmeans(latent_codes_matrix, node.phi[:, 0], best_K)
         for k in range(best_K):
           new_node = Node(node.node_id + '-' + str(k), \
                           len(self.vidid_to_idx), len(self.vidid_frameid_to_idx), node, \
                           LATENT_CODE_SIZE, GAMMA)
-          new_node.alpha = node.alpha + 0.1 * np.random.normal(size=LATENT_CODE_SIZE)
+          #new_node.alpha = node.alpha + 0.1 * np.random.normal(size=LATENT_CODE_SIZE)
+          new_node.alpha = new_centers[k, :]
           new_node.sigmasqr_inv = node.sigmasqr_inv
           new_node.phi = node.phi / best_K
           #new_node.phi = np.random.rand(len(self.vidid_frameid_to_idx), 1)
@@ -229,8 +306,47 @@ class VarInf(object):
         node.alpha += c.alpha
       node.alpha = node.alpha * SIGMA_B_sqrinv / node.sigmasqr_inv
 
+  def compute_sigma_node(self, node, latent_codes_matrix):
+    if node.isLeafNode:
+      sum_phi = np.sum(node.phi)
+      sum_phi_z = np.sum(node.phi * latent_codes_matrix, axis=0)
+      node.sigmasqr_inv = SIGMA_B_sqrinv + sum_phi * SIGMA_Z_sqrinv
+      print node.node_id, SIGMA_B_sqrinv, sum_phi, SIGMA_Z_sqrinv, node.sigmasqr_inv
+    else:
+      # recursively find alpha's and sigma's of children nodes
+      for c in node.children:
+        self.compute_sigma_node(c, latent_codes_matrix)
+      node.sigmasqr_inv = (1.0 + len(node.children)) * SIGMA_B_sqrinv
+
+  def compute_alpha_node(self, node, latent_codes_matrix):
+    if node.isLeafNode:
+      sum_phi = np.sum(node.phi)
+      sum_phi_z = np.sum(node.phi * latent_codes_matrix, axis=0)
+      #node.sigmasqr_inv = SIGMA_B_sqrinv + sum_phi * SIGMA_Z_sqrinv
+      #print node.node_id, SIGMA_B_sqrinv, sum_phi, SIGMA_Z_sqrinv, node.sigmasqr_inv
+      try:
+        node.alpha = deepcopy(node.parent.alpha)
+      except AttributeError:
+        node.alpha = deepcopy(ALPHA)
+      node.alpha = (node.alpha * SIGMA_B_sqrinv + sum_phi_z * SIGMA_Z_sqrinv) \
+                   / node.sigmasqr_inv
+    else:
+      # recursively find alpha's and sigma's of children nodes
+      for c in node.children:
+        self.compute_alpha_node(c, latent_codes_matrix)
+      #node.sigmasqr_inv = (1.0 + len(node.children)) * SIGMA_B_sqrinv
+      try:
+        node.alpha = deepcopy(node.parent.alpha)
+      except AttributeError:
+        node.alpha = deepcopy(ALPHA)
+      for c in node.children:
+        node.alpha += c.alpha
+      node.alpha = node.alpha * SIGMA_B_sqrinv / node.sigmasqr_inv
+
   def compute_sigma_alpha(self, latent_codes_matrix):
-    self.compute_sigma_alpha_node(self.root, latent_codes_matrix)
+    #self.compute_sigma_alpha_node(self.root, latent_codes_matrix)
+    self.compute_sigma_node(self.root, latent_codes_matrix)
+    self.compute_alpha_node(self.root, latent_codes_matrix)
 
   @staticmethod
   def digamma_add0(gamma_sum, new_gamma):
@@ -328,7 +444,9 @@ class VarInf(object):
       sum_phi_children = np.zeros(shape=len(self.vidid_to_idx))
       for c in node.children:
         sum_phi_children += self.compute_gamma_node(c, sum_phi_before + sum_phi_children)
-      return sum_phi_before + sum_phi_children
+      node.gamma[:, 0] = 1.0 + sum_phi_children
+      node.gamma[:, 1] = GAMMA + sum_phi_before
+      return sum_phi_children
 
   def compute_gamma(self):
     self.compute_gamma_node(self.root, np.zeros(shape=len(self.vidid_to_idx)))
@@ -394,3 +512,16 @@ class VarInf(object):
     fileptr = open(filename, 'wb')
     cPickle.dump(nodes_list, fileptr)
     fileptr.close()
+
+  def get_alpha_leaves_node(self, node, result):
+    print node.node_id, len(result)
+    if node.isLeafNode:
+      result.update({node.node_id: node.alpha})
+      return result
+    else:
+      for c in node.children:
+        result.update(self.get_alpha_leaves_node(c, result))
+      return result
+
+  def get_alpha_leaves(self):
+    return self.get_alpha_leaves_node(self.root, {})
