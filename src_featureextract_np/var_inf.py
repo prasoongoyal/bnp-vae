@@ -55,6 +55,9 @@ class VarInf(object):
     indices = []
     for x_annot in x_annot_batch:
       (vidid, frameid) = x_annot
+      # standard VAE
+      true_path_mu_batch.append(np.zeros(shape=LATENT_CODE_SIZE))
+      continue
       if len(self.vidid_frameid_to_idx) == 0:
         # no paths initiated
         true_path_mu_batch.append(np.zeros(shape=LATENT_CODE_SIZE))
@@ -358,6 +361,7 @@ class VarInf(object):
       return digamma(new_gamma[:, 1]) - digamma(np.sum(new_gamma, axis=1))
     return gamma_sum + digamma(new_gamma[:, 1]) - digamma(np.sum(new_gamma, axis=1))
 
+  '''
   def compute_phi_node(self, node, gamma_sum_on, gamma_sum_before, latent_codes_matrix):
     # gamma_sum_on / gamma_sum_before : NUM_VIDS
     # add contribution from parent edge
@@ -369,8 +373,8 @@ class VarInf(object):
                      1.0 / node.sigmasqr_inv)
       for i in range(len(self.vidid_frameid_to_idx)):
         vidid, frameid = self.vidid_frameid_to_idx[i]
-        node.phi[i] = gamma_sum_on[self.vidid_to_idx.index(vidid)] + \
-                      gamma_sum_before[self.vidid_to_idx.index(vidid)] - \
+        node.phi[i] = 0.0 * gamma_sum_on[self.vidid_to_idx.index(vidid)] + \
+                      0.0 * gamma_sum_before[self.vidid_to_idx.index(vidid)] - \
                       scaled_dist[i]
       if node.gamma is None:
         return None
@@ -386,6 +390,30 @@ class VarInf(object):
         return None
       else:
         return VarInf.digamma_add1(gamma_sum_before + gamma_sum_children, node.gamma)
+  '''
+
+  #def compute_gamma_sum(self, node, gamma_sum):
+    
+
+  #def compute_phi_node(self, node, gamma_sum_on, gamma_sum_before, latent_codes_matrix):
+  def compute_phi_node(self, node, latent_codes_matrix, gamma_sum_on, gamma_sum_before):
+    # gamma_sum_on / gamma_sum_before : NUM_VIDS
+    # add contribution from parent edge
+    #if not(node.parent is None):
+    #  gamma_sum_on = VarInf.digamma_add0(gamma_sum_on, node.gamma)
+    if node.isLeafNode:
+      scaled_dist = 0.5 * SIGMA_Z_sqrinv * \
+                    (np.linalg.norm(latent_codes_matrix - node.alpha, axis=1) + \
+                     1.0 / node.sigmasqr_inv)
+      #gamma_sum = self.compute_gamma_sum(node, VarInf.digamma0(None, node.gamma))
+      for i in range(len(self.vidid_frameid_to_idx)):
+        vidid, frameid = self.vidid_frameid_to_idx[i]
+        node.phi[i] = gamma_sum_on[node][self.vidid_to_idx.index(vidid)] + \
+                      gamma_sum_before[node][self.vidid_to_idx.index(vidid)] - \
+                      scaled_dist[i]
+    else:
+      for c in node.children:
+       self.compute_phi_node(c, latent_codes_matrix, gamma_sum_on, gamma_sum_before)
 
   def get_phi_min(self, node):
     if node.isLeafNode:
@@ -419,9 +447,42 @@ class VarInf(object):
       for c in node.children:
         self.exponentiate_phi(c, offset)
 
+  def compute_gamma_sum_on(self, node, curr_path_sum, result):
+    if not(node.parent is None):
+      curr_path_sum = VarInf.digamma_add0(curr_path_sum, node.gamma)
+    if node.isLeafNode:
+      result.update({node: curr_path_sum})
+      return result
+    else:
+      for c in node.children:
+        result = self.compute_gamma_sum_on(c, curr_path_sum, result)
+      return result
+
+  def compute_gamma_sum_before(self, node, curr_path_before, result):
+    if node.isLeafNode:
+      result.update({node: curr_path_before})
+      return VarInf.digamma_add1(None, node.gamma), result
+    else:
+      sum_children = 0.0
+      for c in node.children:
+        sum_c, result = self.compute_gamma_sum_before(c, \
+                             curr_path_before + sum_children, result)
+        sum_children += sum_c
+      #return curr_path_before + sum_children, result
+      return VarInf.digamma_add1(sum_children, node.gamma), result
+
   def compute_phi(self, latent_codes_matrix):
-    self.compute_phi_node(self.root, np.zeros(shape=len(self.vidid_to_idx)), \
-                          np.zeros(shape=len(self.vidid_to_idx)), latent_codes_matrix)
+    #self.compute_phi_node(self.root, np.zeros(shape=len(self.vidid_to_idx)), \
+    #                      np.zeros(shape=len(self.vidid_to_idx)), latent_codes_matrix)
+    gamma_sum_on = self.compute_gamma_sum_on(self.root, \
+                        np.zeros(shape=len(self.vidid_to_idx)), {})
+    _, gamma_sum_before = self.compute_gamma_sum_before(self.root, \
+                            np.zeros(shape=len(self.vidid_to_idx)), {})
+    #print gamma_sum_before
+    #print sorted(zip(gamma_sum_on.keys(), gamma_sum_on.values()), key= lambda(x,y):x)
+    #raw_input()
+    #self.compute_gamma_sum_before(self.root)
+    self.compute_phi_node(self.root, latent_codes_matrix, gamma_sum_on, gamma_sum_before)
     phi_min = self.get_phi_min(self.root)
     self.exponentiate_phi(self.root, phi_min)
     phi_sum = self.get_phi_sum(self.root)
