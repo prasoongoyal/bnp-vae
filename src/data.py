@@ -12,9 +12,6 @@ class Data(object):
     self.batch_size = batch_size
     self.data = np.load(data_file)
     self.metadata = self.prepare_data()
-    #print self.metadata
-    #self.one_epoch_completed = False
-    self.epochs_completed = 0
 
     self.batch_start_idx = 0
 
@@ -27,23 +24,18 @@ class Data(object):
         videoid, frameid = Data.get_videoid_frameid(path)
         train_data.append((idx, videoid, frameid))
         idx += 1
-    #print idx, np.shape(self.data)
-    #print train_data[:10]
-    # shuffle data
-    #train_data = np.random.permutation(train_data)
     np.random.shuffle(train_data)
-    #print train_data[:10]
     print u'Training on %d image files...' % len(train_data)
     return train_data
 
   def get_next_batch(self):
     curr_batch = self.metadata[self.batch_start_idx:
-                  self.batch_start_idx+self.batch_size]     # works even for last batch
+                  self.batch_start_idx+self.batch_size]
     self.batch_start_idx += self.batch_size
+    epoch_completed = False
     if (self.batch_start_idx >= len(self.metadata)):
       self.batch_start_idx = 0
-      self.epochs_completed += 1
-      #self.metadata = np.random.permutation(self.data)
+      epoch_completed = True
       np.random.shuffle(self.metadata)
     # load images and preprocess
     batch = []
@@ -51,7 +43,7 @@ class Data(object):
     data_indices = map(lambda x: x[0], curr_batch)
     batch = self.data[data_indices, :]
     batch_annot = map(lambda x: (x[1], x[2]), curr_batch)
-    return batch, batch_annot, self.epochs_completed
+    return batch, batch_annot, epoch_completed
 
   # gets image filename formatted as "path/to/dir/vid<vidid>_f<frameid>.jpg"
   @staticmethod

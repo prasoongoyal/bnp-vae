@@ -7,8 +7,8 @@ import tensorflow as tf
 import sys
 import resource
 
-batch_size = eval(sys.argv[7])
-LATENT_CODE_SIZE = eval(sys.argv[6])
+batch_size = args.batch_size
+LATENT_CODE_SIZE = args.latent_code_size
 IMG_DIM = {'width': 224, 'height': 224, 'channels': 3}
 #BRANCHING_FACTOR = eval(sys.argv[3])
 #NUM_LEVELS = eval(sys.argv[4])
@@ -28,7 +28,7 @@ SIGMA_B = 1.0
 SIGMA_Z = 1.0
 SIGMA_B_sqrinv = 1.0 / (SIGMA_B ** 2)
 SIGMA_Z_sqrinv = 1.0 / (SIGMA_Z ** 2)
-STDEV_THR = eval(sys.argv[5])
+STDEV_THR = args.stdev_thr
 
 
 def composeAll(*args):
